@@ -31,6 +31,9 @@ test("review hardening invariants stay present", () => {
 test("BON gift notification cleanup is scoped and non-blocking", () => {
   assert.match(source, /async function markGiveawayBonNotificationsRead\(\{ hostName, startTs, endTs \} = \{\}\)/);
   assert.match(source, /giftNotificationOverlapsWindow\(notification, start, end\)/);
+  assert.match(source, /const ts = Number\.isFinite\(utcTs\) \? utcTs : localTs/);
+  assert.match(source, /return \(ts \+ resolutionMs\) >= start && ts <= end/);
+  assert.doesNotMatch(source, /ts <= \(end \+ resolutionMs\)/);
   assert.match(source, /input\[name="_method"\][\s\S]*?PATCH/);
   assert.match(source, /actionUrl\.pathname\.startsWith\(notificationsPath \+ "\/"\)/);
   assert.doesNotMatch(source, /notifications\/mass-update/);
