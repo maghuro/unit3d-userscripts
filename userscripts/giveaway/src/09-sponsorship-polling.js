@@ -195,16 +195,20 @@
         const end = Number(endTs);
         if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return false;
 
-        const resolutionMs = unit3dTimestampResolutionMs(notification?.rawTimestamp);
-        const candidates = [
-            Number(notification?.createdAtTs),
-            Number(notification?.createdAtAltTs)
-        ].filter(Number.isFinite);
+        // DarkPeers notification datetimes are rendered without an explicit zone,
+        // but the existing clock-calibration path treats them as UTC-scale event
+        // time. Prefer that interpretation and only fall back to browser-local time
+        // if the UTC parse is unavailable.
+        const utcTs = Number(notification?.createdAtAltTs);
+        const localTs = Number(notification?.createdAtTs);
+        const ts = Number.isFinite(utcTs) ? utcTs : localTs;
+        if (!Number.isFinite(ts)) return false;
 
-        return candidates.some(ts =>
-            (ts + resolutionMs) >= start &&
-            ts <= (end + resolutionMs)
-        );
+        // Timestamp precision describes the notification's own represented interval.
+        // Never extend the giveaway's upper cutoff, otherwise a late gift can be
+        // swept into the just-finished giveaway.
+        const resolutionMs = unit3dTimestampResolutionMs(notification?.rawTimestamp);
+        return (ts + resolutionMs) >= start && ts <= end;
     }
 
     async function markGiveawayBonNotificationsRead({ hostName, startTs, endTs } = {}) {
