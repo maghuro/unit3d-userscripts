@@ -28,6 +28,23 @@ test("review hardening invariants stay present", () => {
   );
 });
 
+test("BON gift notification cleanup is scoped and non-blocking", () => {
+  assert.match(source, /async function markGiveawayBonNotificationsRead\(\{ hostName, startTs, endTs \} = \{\}\)/);
+  assert.match(source, /giftNotificationOverlapsWindow\(notification, start, end\)/);
+  assert.match(source, /input\[name="_method"\][\s\S]*?PATCH/);
+  assert.match(source, /actionUrl\.pathname\.startsWith\(notificationsPath \+ "\/"\)/);
+  assert.doesNotMatch(source, /notifications\/mass-update/);
+
+  const completion = source.indexOf('giveawayData.settlement.phase = "complete"');
+  const stop = source.indexOf("const stopped = stopGiveaway()", completion);
+  const cleanup = source.indexOf("void markGiveawayBonNotificationsRead(notificationCleanupContext)", stop);
+  assert.ok(completion >= 0 && stop > completion && cleanup > stop);
+  assert.doesNotMatch(
+    source.slice(stop, cleanup + 100),
+    /await\s+markGiveawayBonNotificationsRead/
+  );
+});
+
 test("public update metadata is split from the install payload", () => {
   const header = source.match(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==/)?.[0] || "";
 
