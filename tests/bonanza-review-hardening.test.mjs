@@ -9,7 +9,7 @@ const sourcePath = new URL(
 const source = readFileSync(sourcePath, "utf8");
 
 test("review hardening invariants stay present", () => {
-  assert.match(source, /^\/\/ @version\s+1\.5\.11$/m);
+  assert.match(source, /^\/\/ @version\s+1\.5\.12$/m);
   assert.doesNotMatch(source, /pollChatFallback/);
   assert.doesNotMatch(source, /onlyguardians/i);
   assert.match(source, /async function getLatestMainChatReplayBoundary\(\)/);
@@ -25,6 +25,26 @@ test("review hardening invariants stay present", () => {
   assert.equal(
     (source.match(/getLatestChatMessageId\(DARKPEERS_CHATROOM_ID\)/g) || []).length,
     2
+  );
+});
+
+test("BON gift notification cleanup is scoped and non-blocking", () => {
+  assert.match(source, /async function markGiveawayBonNotificationsRead\(\{ hostName, startTs, endTs \} = \{\}\)/);
+  assert.match(source, /giftNotificationOverlapsWindow\(notification, start, end\)/);
+  assert.match(source, /const ts = Number\.isFinite\(utcTs\) \? utcTs : localTs/);
+  assert.match(source, /return \(ts \+ resolutionMs\) >= start && ts <= end/);
+  assert.doesNotMatch(source, /ts <= \(end \+ resolutionMs\)/);
+  assert.match(source, /input\[name="_method"\][\s\S]*?PATCH/);
+  assert.match(source, /actionUrl\.pathname\.startsWith\(notificationsPath \+ "\/"\)/);
+  assert.doesNotMatch(source, /notifications\/mass-update/);
+
+  const completion = source.indexOf('giveawayData.settlement.phase = "complete"');
+  const stop = source.indexOf("const stopped = stopGiveaway()", completion);
+  const cleanup = source.indexOf("void markGiveawayBonNotificationsRead(notificationCleanupContext)", stop);
+  assert.ok(completion >= 0 && stop > completion && cleanup > stop);
+  assert.doesNotMatch(
+    source.slice(stop, cleanup + 100),
+    /await\s+markGiveawayBonNotificationsRead/
   );
 });
 
