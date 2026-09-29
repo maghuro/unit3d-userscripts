@@ -148,6 +148,27 @@
                 const rawNote = String(bodyMatch[3] || "").replace(/\s+/g, " ").trim();
                 const message = /^no note$/i.test(rawNote) ? "" : rawNote;
 
+                // UNIT3D renders one CSRF-protected PATCH form per notification.
+                // Preserve the form's own action/hidden fields so cleanup can mirror
+                // the site's supported "mark read" operation instead of guessing an API.
+                const markReadForm = Array.from(row.querySelectorAll('form[method="POST"], form[method="post"]'))
+                    .find(form =>
+                        String(form.querySelector('input[name="_method"]')?.value || "").toUpperCase() === "PATCH"
+                    ) || null;
+                const markReadButton = markReadForm?.querySelector("button");
+                const markReadAction = String(markReadForm?.getAttribute("action") || "").trim();
+                const markReadFields = markReadForm
+                    ? Array.from(markReadForm.querySelectorAll("input[name]"))
+                        .map(input => [
+                            String(input.getAttribute("name") || "").trim(),
+                            String(input.value ?? "")
+                        ])
+                        .filter(([name]) => !!name)
+                    : [];
+                const unread =
+                    cells[0].classList.contains("notification--unread") ||
+                    (!!markReadButton && !markReadButton.disabled);
+
                 return {
                     sender,
                     recipient: host,
@@ -155,7 +176,10 @@
                     message,
                     rawTimestamp,
                     createdAtTs,
-                    createdAtAltTs
+                    createdAtAltTs,
+                    unread,
+                    markReadAction,
+                    markReadFields
                 };
             })
             .filter(item =>
@@ -164,6 +188,135 @@
                 Number.isFinite(item.amount) &&
                 item.amount > 0
             );
+    }
+
+    function giftNotificationOverlapsWindow(notification, startTs, endTs) {
+        const start = Number(startTs);
+        const end = Number(endTs);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return false;
+
+        const resolutionMs = unit3dTimestampResolutionMs(notification?.rawTimestamp);
+        const candidates = [
+            Number(notification?.createdAtTs),
+            Number(notification?.createdAtAltTs)
+        ].filter(Number.isFinite);
+
+        return candidates.some(ts =>
+            (ts + resolutionMs) >= start &&
+            ts <= (end + resolutionMs)
+        );
+    }
+
+    async function markGiveawayBonNotificationsRead({ hostName, startTs, endTs } = {}) {
+        // Cleanup is deliberately outside settlement correctness. It never runs in
+        // rehearsal mode and every failure is absorbed by this helper/caller.
+        if (REHEARSAL_MODE) {
+            return { matched: 0, marked: 0, failed: 0, skipped: "rehearsal" };
+        }
+
+        const host = String(hostName || "").trim();
+        const start = Number(startTs);
+        const end = Number(endTs);
+        const senderSlug = getAuthenticatedUserSlug();
+        if (
+            !host ||
+            !senderSlug ||
+            !Number.isFinite(start) ||
+            !Number.isFinite(end) ||
+            end < start
+        ) {
+            return { matched: 0, marked: 0, failed: 0, skipped: "invalid-context" };
+        }
+
+        const notificationsPath = `/users/${encodeURIComponent(decodeURIComponent(senderSlug))}/notifications`;
+        const targetsByAction = new Map();
+        const maxPages = 6;
+
+        for (let page = 1; page <= maxPages; page++) {
+            try {
+                const notificationsUrl = new URL(notificationsPath, location.origin);
+                if (page > 1) notificationsUrl.searchParams.set("page", String(page));
+                notificationsUrl.searchParams.set("_dpgw_cleanup", String(Date.now()));
+
+                const res = await fetchWithTimeout(
+                    notificationsUrl,
+                    {
+                        credentials: "same-origin",
+                        cache: "no-store"
+                    },
+                    5000
+                );
+                if (!res?.ok) continue;
+
+                const rows = parseGiftNotificationsPage(await res.text(), host);
+                for (const notification of rows) {
+                    if (!notification.unread) continue;
+                    if (!notification.markReadAction || !notification.markReadFields?.length) continue;
+                    if (!giftNotificationOverlapsWindow(notification, start, end)) continue;
+
+                    let actionUrl;
+                    try {
+                        actionUrl = new URL(notification.markReadAction, location.origin);
+                    } catch {
+                        continue;
+                    }
+
+                    // Never POST a parsed form away from DarkPeers or outside this
+                    // authenticated user's notification routes.
+                    if (actionUrl.origin !== location.origin) continue;
+                    if (!actionUrl.pathname.startsWith(notificationsPath + "/")) continue;
+
+                    targetsByAction.set(actionUrl.href, {
+                        actionUrl,
+                        fields: notification.markReadFields
+                    });
+                }
+            } catch (e) {
+                console.warn(`[BON Giveaway] Notification cleanup page ${page} skipped:`, e);
+            }
+        }
+
+        const targets = Array.from(targetsByAction.values());
+        let marked = 0;
+        let failed = 0;
+        const concurrency = 4;
+
+        for (let offset = 0; offset < targets.length; offset += concurrency) {
+            const batch = targets.slice(offset, offset + concurrency);
+            const results = await Promise.allSettled(batch.map(async target => {
+                const body = new URLSearchParams();
+                for (const [name, value] of target.fields) body.append(name, value);
+
+                const res = await fetchWithTimeout(
+                    target.actionUrl,
+                    {
+                        method: "POST",
+                        credentials: "same-origin",
+                        cache: "no-store",
+                        redirect: "follow",
+                        headers: {
+                            "Accept": "text/html",
+                            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+                        },
+                        body: body.toString()
+                    },
+                    5000
+                );
+                if (!res?.ok) {
+                    throw new Error(`HTTP ${res?.status || "unknown"}`);
+                }
+            }));
+
+            for (const result of results) {
+                if (result.status === "fulfilled") marked += 1;
+                else failed += 1;
+            }
+        }
+
+        console.info(
+            `[BON Giveaway] BON notification cleanup: matched=${targets.length}, marked=${marked}, failed=${failed}`
+        );
+        return { matched: targets.length, marked, failed };
     }
 
     function giftHistoryBaseKey(item) {
