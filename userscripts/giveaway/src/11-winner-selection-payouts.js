@@ -1708,7 +1708,21 @@
             giveawayData.settlement.completedAt = Date.now();
             snapshotGiveaway({ force: true });
         }
-        stopGiveaway();
+
+        // Capture the notification window before stopGiveaway() clears runtime
+        // state. Cleanup starts only after settlement is terminal and is explicitly
+        // fire-and-forget: notification failures can never block or roll back BON
+        // transfers, verification, statements, stats, or snapshot retirement.
+        const notificationCleanupContext = {
+            hostName: giveawayData?.host || "",
+            startTs: giveawayStartTime instanceof Date ? giveawayStartTime.getTime() : null,
+            endTs: settlementCutoffTs
+        };
+        const stopped = stopGiveaway();
+        if (stopped) {
+            void markGiveawayBonNotificationsRead(notificationCleanupContext)
+                .catch(e => console.warn("[BON Giveaway] BON notification cleanup failed:", e));
+        }
     }
 
     function clearWinnersStatusUI() {
