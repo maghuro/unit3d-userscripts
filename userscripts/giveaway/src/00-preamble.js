@@ -2,7 +2,7 @@
 // @name         DarkPeers BONanza Giveaway | Maghuro Fork
 // @namespace    https://darkpeers.org/users/maghuro
 // @description  BON giveaways on DarkPeers with an optional direct contribution to the BON Pool
-// @version      1.5.11
+// @version      1.5.12
 // @author       🤖 T.R.A.V.I.S., Maghuro & M.A.E.S.T.R.O.
 // @homepageURL  https://darkpeers.org/users/maghuro
 // @updateURL    https://gist.githubusercontent.com/maghuro/da2dbfec94951990cbc54e75a9aee318/raw/DarkPeers_BONanza_Giveaway.meta.js
@@ -231,6 +231,11 @@
 //     explicitly, preserve that status through finalization, and infer/sanitize
 //     rehearsal-only v1.5.9 statements so dry-run success cannot be mistaken for
 //     proof of a real BON movement.
+//   - v1.5.12 adds best-effort post-settlement cleanup for unread BON gift
+//     notifications received during the giveaway window. It reuses UNIT3D's own
+//     per-notification CSRF-protected PATCH forms, never mass-marks unrelated
+//     notifications, and runs fire-and-forget so cleanup failure cannot block or
+//     roll back giveaway settlement.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
