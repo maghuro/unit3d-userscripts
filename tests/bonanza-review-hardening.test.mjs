@@ -9,7 +9,7 @@ const sourcePath = new URL(
 const source = readFileSync(sourcePath, "utf8");
 
 test("review hardening invariants stay present", () => {
-  assert.match(source, /^\/\/ @version\s+1\.5\.13$/m);
+  assert.match(source, /^\/\/ @version\s+1\.5\.14$/m);
   assert.doesNotMatch(source, /pollChatFallback/);
   assert.doesNotMatch(source, /onlyguardians/i);
   assert.match(source, /async function getLatestMainChatReplayBoundary\(\)/);
@@ -26,6 +26,23 @@ test("review hardening invariants stay present", () => {
     (source.match(/getLatestChatMessageId\(DARKPEERS_CHATROOM_ID\)/g) || []).length,
     2
   );
+});
+
+test("definitively rejected gift chat fallbacks remain retryable", () => {
+  assert.match(source, /function restoreDefinitivelyRejectedGiftAttempt\(/);
+  assert.match(source, /const terminalMarker = markGiftAttemptTerminal\(/);
+  assert.match(
+    source,
+    /await sendMessage\(cmd, \{[\s\S]*?requireExclusiveGiveawayOwnership: true[\s\S]*?\}\)/
+  );
+  assert.match(source, /if \(sent\) return \{ sent: true \}/);
+  assert.match(
+    source,
+    /restoreDefinitivelyRejectedGiftAttempt\([\s\S]*?attemptToken,[\s\S]*?terminalMarker[\s\S]*?\)/
+  );
+  assert.match(source, /reason: "chat-send-rejected"/);
+  assert.match(source, /reason: "attempt-ledger-unavailable"/);
+  assert.doesNotMatch(source, /await sendMessage\(cmd\);\s*return true;/);
 });
 
 test("BON gift notification cleanup is scoped and non-blocking", () => {
