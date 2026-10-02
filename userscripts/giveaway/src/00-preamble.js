@@ -2,7 +2,7 @@
 // @name         DarkPeers BONanza Giveaway | Maghuro Fork
 // @namespace    https://darkpeers.org/users/maghuro
 // @description  BON giveaways on DarkPeers with an optional direct contribution to the BON Pool
-// @version      1.5.12
+// @version      1.5.13
 // @author       🤖 T.R.A.V.I.S., Maghuro & M.A.E.S.T.R.O.
 // @homepageURL  https://darkpeers.org/users/maghuro
 // @updateURL    https://gist.githubusercontent.com/maghuro/da2dbfec94951990cbc54e75a9aee318/raw/DarkPeers_BONanza_Giveaway.meta.js
@@ -236,6 +236,10 @@
 //     per-notification CSRF-protected PATCH forms, never mass-marks unrelated
 //     notifications, and runs fire-and-forget so cleanup failure cannot block or
 //     roll back giveaway settlement.
+//   - v1.5.13 fixes chat number formatting so comma-separated giveaway values are
+//     never collapsed into a fake thousands-grouped number. Usernames containing
+//     digits (for example Sch2021) no longer trigger unrelated formatting, while
+//     genuine 1,000 / 1 000 / 1'000-style amounts remain normalized with spaces.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 

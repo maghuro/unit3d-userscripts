@@ -124,6 +124,46 @@ const constantsSource = readSource("userscripts/giveaway/src/01-global-constants
 const sponsorSource = readSource("userscripts/giveaway/src/09-sponsorship-polling.js");
 const payoutSource = readSource("userscripts/giveaway/src/11-winner-selection-payouts.js");
 
+function loadChatNumberFormatter() {
+  const context = makeContext();
+  const formatter = extractBraceBlock(utilitiesSource, "function formatChatNumbersWithSpaces");
+
+  vm.runInContext(
+    `${formatter}\nglobalThis.formatChatNumbersWithSpaces = formatChatNumbersWithSpaces;`,
+    context
+  );
+
+  return context.formatChatNumbersWithSpaces;
+}
+
+test("chat number formatter preserves comma-separated giveaway suggestions with digit-bearing usernames", () => {
+  const format = loadChatNumberFormatter();
+  const message =
+    "🚫 Sorry d\u200Bemonkadar, but S\u200Bch2021 already entered with number " +
+    "[color=#DC3D1D][b]61[/b][/color]! Here are some free numbers you can try: " +
+    "[b][color=#1DDC5D]28, 36, 52, 83, 89[/color][/b].";
+
+  assert.equal(format(message), message);
+});
+
+test("chat number formatter never mistakes comma-space list syntax for thousands grouping", () => {
+  const format = loadChatNumberFormatter();
+
+  assert.equal(
+    format("Free numbers: 28, 365, 52, 83, 89."),
+    "Free numbers: 28, 365, 52, 83, 89."
+  );
+});
+
+test("chat number formatter still normalizes genuine thousands-grouped amounts", () => {
+  const format = loadChatNumberFormatter();
+
+  assert.equal(
+    format("Amounts: 1000 | 1000000 | 1,000,000 | 1 000 000 | 1'000'000 | 1’000’000"),
+    "Amounts: 1 000 | 1 000 000 | 1 000 000 | 1 000 000 | 1 000 000 | 1 000 000"
+  );
+});
+
 function loadFinancialFunctions() {
   const context = makeContext({
     BONANZA: {
