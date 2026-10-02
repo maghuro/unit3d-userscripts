@@ -1148,10 +1148,59 @@
 
         // A numeric value is the established terminal-attempt representation and
         // remains compatible with ledgers written by older stable versions.
-        ledger[giveawayId][giftKey] = Date.now();
+        // Return the exact marker so a definitively rejected fallback can restore
+        // only the terminal value written by this specific attempt.
+        const terminalMarker = Date.now();
+        ledger[giveawayId][giftKey] = terminalMarker;
         if (!writePaidGiftsLedger(ledger, { verifyWrite: true })) return false;
         clearGiftAttemptRetryable(giveawayId, recipient, amount, purpose, attemptToken);
-        return true;
+        return terminalMarker;
+    }
+
+    function restoreDefinitivelyRejectedGiftAttempt(
+        giveawayId,
+        recipient,
+        amount,
+        purpose,
+        attemptToken,
+        terminalMarker
+    ) {
+        if (
+            !giveawayId ||
+            !attemptToken ||
+            !Number.isFinite(Number(terminalMarker)) ||
+            !ownsTabLock()
+        ) {
+            return false;
+        }
+
+        const ledger = readPaidGiftsLedger();
+        const giftKey = paidGiftKey(recipient, amount, purpose);
+        if (ledger[giveawayId]?.[giftKey] !== terminalMarker) return false;
+
+        // Publish the retryable marker before restoring the token. If the ledger
+        // rewrite fails, the old numeric terminal value still wins and the stale
+        // retry marker is harmless. If it succeeds, both durable pieces identify
+        // this exact known-unsent attempt as safe to retry.
+        const retryKey = paidGiftRetryableKey(giveawayId, recipient, amount, purpose);
+        try {
+            localStorage.setItem(retryKey, attemptToken);
+            if (localStorage.getItem(retryKey) !== attemptToken) return false;
+        } catch {
+            return false;
+        }
+
+        ledger[giveawayId][giftKey] = attemptToken;
+        if (!writePaidGiftsLedger(ledger, { verifyWrite: true })) return false;
+
+        const verified = readPaidGiftsLedger();
+        if (verified[giveawayId]?.[giftKey] !== attemptToken) return false;
+
+        try {
+            return localStorage.getItem(retryKey) === attemptToken;
+        } catch {
+            return false;
+        }
     }
 
     function recoverOrphanedPendingGiftAttempt(giveawayId, recipient, amount, purpose, attemptState) {
@@ -1311,7 +1360,7 @@
                     "Gift fallback aborted (attempt superseded)",
                     `The transfer token for ${sanitizeNick(safeRecipient)} was replaced by a newer owner before fallback could run.`
                 );
-                return false;
+                return { sent: false, reason: "attempt-superseded" };
             }
 
             if (!(await ensureExclusiveTabOwnership())) {
@@ -1319,30 +1368,66 @@
                     "Gift fallback paused (ownership lost)",
                     `Refusing chat fallback for ${sanitizeNick(safeRecipient)} because this tab cannot prove exclusive giveaway ownership; the rejected attempt remains retryable.`
                 );
-                return false;
+                return { sent: false, reason: "ownership-lost" };
             }
 
             // We own the giveaway again and are about to make the fallback send
             // ambiguous. Make this exact attempt terminal before sending.
-            if (!markGiftAttemptTerminal(
+            const terminalMarker = markGiftAttemptTerminal(
                 giveawayId,
                 safeRecipient,
                 safeAmount,
                 purpose,
                 attemptToken
-            )) {
+            );
+            if (!terminalMarker) {
                 logEvent(
                     "Gift fallback aborted (attempt superseded)",
                     `The transfer token for ${sanitizeNick(safeRecipient)} changed before the chat fallback send; refusing to risk a duplicate payment.`
                 );
-                return false;
+                return { sent: false, reason: "attempt-superseded" };
             }
 
             const cmd = safeMessage
                 ? `/gift ${safeRecipient} ${safeAmount} ${safeMessage}`
                 : `/gift ${safeRecipient} ${safeAmount}`;
-            await sendMessage(cmd);
-            return true;
+
+            const sent = await sendMessage(cmd, {
+                requireExclusiveGiveawayOwnership: true
+            });
+            if (sent) return { sent: true };
+
+            // sendMessage() returning false means neither supported chat transport
+            // accepted the command. If we still own the giveaway, no transfer was
+            // initiated, so restore this exact terminal marker to retryable state.
+            if (!ownsTabLock()) {
+                logEvent(
+                    "Gift fallback rejected after ownership loss",
+                    `The chat fallback for ${sanitizeNick(safeRecipient)} was not sent and this tab no longer owns the giveaway; settlement will resume from the durable state.`
+                );
+                return { sent: false, reason: "ownership-lost" };
+            }
+
+            if (!restoreDefinitivelyRejectedGiftAttempt(
+                giveawayId,
+                safeRecipient,
+                safeAmount,
+                purpose,
+                attemptToken,
+                terminalMarker
+            )) {
+                logEvent(
+                    "Gift fallback rejected (retry state unavailable)",
+                    `The chat fallback for ${sanitizeNick(safeRecipient)} was definitively rejected, but its retryable ledger state could not be restored safely.`
+                );
+                return { sent: false, reason: "attempt-ledger-unavailable" };
+            }
+
+            logEvent(
+                "Gift fallback rejected (retryable)",
+                `The chat fallback for ${sanitizeNick(safeRecipient)} was definitively rejected before send; the exact transfer attempt remains safe to retry.`
+            );
+            return { sent: false, reason: "chat-send-rejected" };
         }
 
         const csrfMeta = document.querySelector('meta[name="csrf-token"]');
@@ -1361,8 +1446,9 @@
         // If we can't resolve the HTTP endpoint or token, fall back immediately.
         // This is safe: we haven't sent anything yet, so /gift is the first attempt.
         if (!csrfToken || !giftUrl) {
-            if (!(await fallbackToChat())) {
-                return { attempted: false, reason: "ownership-lost" };
+            const fallback = await fallbackToChat();
+            if (!fallback.sent) {
+                return { attempted: false, reason: fallback.reason || "chat-send-rejected" };
             }
             return { attempted: true, transport: "chat" };
         }
@@ -1396,8 +1482,13 @@
                     "Gift HTTP rejected, falling back",
                     `${sanitizeNick(safeRecipient)} ${fmtBONCurrency(safeAmount)} BON | status=${resp.status}`
                 );
-                if (!(await fallbackToChat())) {
-                    return { attempted: false, reason: "ownership-lost", httpStatus: resp.status };
+                const fallback = await fallbackToChat();
+                if (!fallback.sent) {
+                    return {
+                        attempted: false,
+                        reason: fallback.reason || "chat-send-rejected",
+                        httpStatus: resp.status
+                    };
                 }
                 return { attempted: true, transport: "chat-fallback", httpStatus: resp.status };
             }
