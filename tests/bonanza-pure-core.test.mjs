@@ -164,6 +164,107 @@ test("chat number formatter still normalizes genuine thousands-grouped amounts",
   );
 });
 
+function loadRejectedGiftRestore({ owns = true, terminalMarker = 123456789, writeSucceeds = true } = {}) {
+  const giveawayId = "giveaway-1";
+  const giftKey = "winner::100::winner";
+  const retryKey = "retry-key";
+  const storage = new Map();
+  let ledger = {
+    [giveawayId]: {
+      [giftKey]: terminalMarker
+    }
+  };
+
+  const context = makeContext({
+    ownsTabLock() { return owns; },
+    paidGiftKey() { return giftKey; },
+    paidGiftRetryableKey() { return retryKey; },
+    readPaidGiftsLedger() {
+      return JSON.parse(JSON.stringify(ledger));
+    },
+    writePaidGiftsLedger(next) {
+      if (!writeSucceeds) return false;
+      ledger = JSON.parse(JSON.stringify(next));
+      return true;
+    },
+    localStorage: {
+      setItem(key, value) { storage.set(String(key), String(value)); },
+      getItem(key) { return storage.has(String(key)) ? storage.get(String(key)) : null; }
+    }
+  });
+
+  const restore = extractBraceBlock(
+    utilitiesSource,
+    "function restoreDefinitivelyRejectedGiftAttempt"
+  );
+  vm.runInContext(
+    `${restore}\nglobalThis.restoreDefinitivelyRejectedGiftAttempt = restoreDefinitivelyRejectedGiftAttempt;`,
+    context
+  );
+
+  return {
+    restore: context.restoreDefinitivelyRejectedGiftAttempt,
+    giveawayId,
+    terminalMarker,
+    getLedger: () => ledger,
+    storage,
+    giftKey,
+    retryKey
+  };
+}
+
+test("definitively rejected gift fallback restores only its exact terminal marker", () => {
+  const harness = loadRejectedGiftRestore();
+  const token = "tab-a:123:token";
+
+  assert.equal(
+    harness.restore(
+      harness.giveawayId,
+      "winner",
+      100,
+      "winner",
+      token,
+      harness.terminalMarker
+    ),
+    true
+  );
+  assert.equal(harness.getLedger()[harness.giveawayId][harness.giftKey], token);
+  assert.equal(harness.storage.get(harness.retryKey), token);
+});
+
+test("rejected gift retry restore fails closed on marker mismatch or lost ownership", () => {
+  const mismatch = loadRejectedGiftRestore();
+  assert.equal(
+    mismatch.restore(
+      mismatch.giveawayId,
+      "winner",
+      100,
+      "winner",
+      "tab-a:123:token",
+      mismatch.terminalMarker + 1
+    ),
+    false
+  );
+  assert.equal(
+    mismatch.getLedger()[mismatch.giveawayId][mismatch.giftKey],
+    mismatch.terminalMarker
+  );
+
+  const lost = loadRejectedGiftRestore({ owns: false });
+  assert.equal(
+    lost.restore(
+      lost.giveawayId,
+      "winner",
+      100,
+      "winner",
+      "tab-a:123:token",
+      lost.terminalMarker
+    ),
+    false
+  );
+  assert.equal(lost.storage.size, 0);
+});
+
 function loadFinancialFunctions() {
   const context = makeContext({
     BONANZA: {
