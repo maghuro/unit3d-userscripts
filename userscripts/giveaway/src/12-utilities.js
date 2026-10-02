@@ -1393,13 +1393,15 @@
                 : `/gift ${safeRecipient} ${safeAmount}`;
 
             const sent = await sendMessage(cmd, {
-                requireExclusiveGiveawayOwnership: true
+                requireExclusiveGiveawayOwnership: true,
+                forceChatboxOnly: true
             });
             if (sent) return { sent: true };
 
-            // sendMessage() returning false means neither supported chat transport
-            // accepted the command. If we still own the giveaway, no transfer was
-            // initiated, so restore this exact terminal marker to retryable state.
+            // This fallback is deliberately chatbox-only. Therefore a false result
+            // cannot hide an ambiguous /api/chat/messages timeout: no chat API
+            // request was attempted. If we still own the giveaway, the command was
+            // definitively not dispatched and this exact attempt is safe to retry.
             if (!ownsTabLock()) {
                 logEvent(
                     "Gift fallback rejected after ownership loss",
@@ -1706,6 +1708,7 @@
             options?.requireExclusiveGiveawayOwnership === true;
         const allowRehearsalPrivateOutput =
             options?.rehearsalPrivateOutput === true;
+        const forceChatboxOnly = options?.forceChatboxOnly === true;
 
         if (REHEARSAL_MODE && !allowRehearsalPrivateOutput) {
             const rehearsalHost = String(giveawayData?.host || getLoggedInUsername() || "").trim();
@@ -1742,7 +1745,9 @@
         if (!OT_USER_ID || !OT_CHATROOM_ID || !OT_CSRF_TOKEN) cacheChatContext();
 
         // --- Attempt API POST, fall back to chatbox on failure ---
-        if (!DEBUG_SETTINGS.suppressApiMessages) {
+        // Slash-command gift fallbacks can force the synchronous chatbox path so
+        // an ambiguous API timeout can never be mistaken for a definite no-send.
+        if (!forceChatboxOnly && !DEBUG_SETTINGS.suppressApiMessages) {
             try {
                 if (await trySendViaApi(messageStr)) return true;
             } catch (e) {
