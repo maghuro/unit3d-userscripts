@@ -241,9 +241,9 @@
 //     digits (for example Sch2021) no longer trigger unrelated formatting, while
 //     genuine 1,000 / 1 000 / 1'000-style amounts remain normalized with spaces.
 //   - v1.5.14 keeps a definitively rejected /gift chat fallback retryable. The
-//     fallback now preserves exclusive-ownership enforcement, checks whether the
-//     chat transport actually accepted the command, and only restores the exact
-//     terminal ledger marker written by that unsent attempt after durable read-back.
+//     fallback now preserves exclusive ownership, uses the chatbox-only slash-command
+//     path so an ambiguous chat-API timeout can never be mistaken for a definite
+//     no-send, and restores only the exact unsent terminal marker after durable read-back.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
