@@ -241,9 +241,9 @@
 //     digits (for example Sch2021) no longer trigger unrelated formatting, while
 //     genuine 1,000 / 1 000 / 1'000-style amounts remain normalized with spaces.
 //   - v1.5.14 keeps a definitively rejected /gift chat fallback retryable. The
-//     fallback now preserves exclusive-ownership enforcement, checks whether the
-//     chat transport actually accepted the command, and only restores the exact
-//     terminal ledger marker written by that unsent attempt after durable read-back.
+//     fallback now preserves exclusive ownership, uses the chatbox-only slash-command
+//     path so an ambiguous chat-API timeout can never be mistaken for a definite
+//     no-send, and restores only the exact unsent terminal marker after durable read-back.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
@@ -11821,13 +11821,15 @@ body.host-panel-dragging * {
                 : `/gift ${safeRecipient} ${safeAmount}`;
 
             const sent = await sendMessage(cmd, {
-                requireExclusiveGiveawayOwnership: true
+                requireExclusiveGiveawayOwnership: true,
+                forceChatboxOnly: true
             });
             if (sent) return { sent: true };
 
-            // sendMessage() returning false means neither supported chat transport
-            // accepted the command. If we still own the giveaway, no transfer was
-            // initiated, so restore this exact terminal marker to retryable state.
+            // This fallback is deliberately chatbox-only. Therefore a false result
+            // cannot hide an ambiguous /api/chat/messages timeout: no chat API
+            // request was attempted. If we still own the giveaway, the command was
+            // definitively not dispatched and this exact attempt is safe to retry.
             if (!ownsTabLock()) {
                 logEvent(
                     "Gift fallback rejected after ownership loss",
@@ -12134,6 +12136,7 @@ body.host-panel-dragging * {
             options?.requireExclusiveGiveawayOwnership === true;
         const allowRehearsalPrivateOutput =
             options?.rehearsalPrivateOutput === true;
+        const forceChatboxOnly = options?.forceChatboxOnly === true;
 
         if (REHEARSAL_MODE && !allowRehearsalPrivateOutput) {
             const rehearsalHost = String(giveawayData?.host || getLoggedInUsername() || "").trim();
@@ -12170,7 +12173,9 @@ body.host-panel-dragging * {
         if (!OT_USER_ID || !OT_CHATROOM_ID || !OT_CSRF_TOKEN) cacheChatContext();
 
         // --- Attempt API POST, fall back to chatbox on failure ---
-        if (!DEBUG_SETTINGS.suppressApiMessages) {
+        // Slash-command gift fallbacks can force the synchronous chatbox path so
+        // an ambiguous API timeout can never be mistaken for a definite no-send.
+        if (!forceChatboxOnly && !DEBUG_SETTINGS.suppressApiMessages) {
             try {
                 if (await trySendViaApi(messageStr)) return true;
             } catch (e) {
