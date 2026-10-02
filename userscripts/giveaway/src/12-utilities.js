@@ -1453,8 +1453,23 @@
             if (!str) return str;
 
             const raw = String(str);
-            // Quick bailout: nothing that looks like a 4+ digit number or grouped digits.
-            if (!/\d{4}/.test(raw) && !/\d{1,3}[,\s'’]\d{3}/.test(raw)) return raw;
+
+            // Only treat one lexical numeric token at a time as a thousands-formatted
+            // number. In particular, comma+space is intentionally NOT a thousands
+            // separator because giveaway lists use it between independent values:
+            // "28, 36, 52, 83, 89" must never become "28, 365 283, 89".
+            //
+            // Supported forms:
+            //   1000 / 1000000
+            //   1,000 / 1,000,000
+            //   1 000 / 1 000 000 (including NBSP/narrow NBSP)
+            //   1'000 / 1’000’000
+            const formattableNumberRe =
+                /\b(?:\d{4,}|\d{1,3}(?:,\d{3})+|\d{1,3}(?:[ \u00A0\u202F]\d{3})+|\d{1,3}(?:['’]\d{3})+)\b/;
+
+            // Quick bailout also avoids usernames such as "Sch2021" waking the
+            // formatter up merely because they contain four consecutive digits.
+            if (!formattableNumberRe.test(raw)) return raw;
 
             // Protect URL segments and BBCode tags/attributes from numeric formatting.
             // This keeps [tag=...], [url=...], and color hexes untouched.
@@ -1464,11 +1479,13 @@
                 return `__BG_PROTECTED_${idx}__`;
             });
 
-            const formatted = protectedText.replace(/\b\d[\d,\s'’]*\d\b/g, (match) => {
-                const digits = match.replace(/[^\d]/g, "");
-                if (digits.length < 4) return match;
-                return digits.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-            });
+            const formatted = protectedText.replace(
+                /\b(?:\d{4,}|\d{1,3}(?:,\d{3})+|\d{1,3}(?:[ \u00A0\u202F]\d{3})+|\d{1,3}(?:['’]\d{3})+)\b/g,
+                (match) => {
+                    const digits = match.replace(/[^\d]/g, "");
+                    return digits.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+                }
+            );
 
             return formatted.replace(/__BG_PROTECTED_(\d+)__/g, (_, i) => protectedParts[Number(i)] ?? "");
         } catch {
