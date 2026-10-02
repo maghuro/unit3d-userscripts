@@ -33,8 +33,10 @@ test("definitively rejected gift chat fallbacks remain retryable", () => {
   assert.match(source, /const terminalMarker = markGiftAttemptTerminal\(/);
   assert.match(
     source,
-    /await sendMessage\(cmd, \{[\s\S]*?requireExclusiveGiveawayOwnership: true[\s\S]*?\}\)/
+    /await sendMessage\(cmd, \{[\s\S]*?requireExclusiveGiveawayOwnership: true,[\s\S]*?forceChatboxOnly: true[\s\S]*?\}\)/
   );
+  assert.match(source, /const forceChatboxOnly = options\?\.forceChatboxOnly === true/);
+  assert.match(source, /if \(!forceChatboxOnly && !DEBUG_SETTINGS\.suppressApiMessages\)/);
   assert.match(source, /if \(sent\) return \{ sent: true \}/);
   assert.match(
     source,
