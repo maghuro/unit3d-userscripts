@@ -304,7 +304,14 @@ test("Rehearsal Mode delivers the same 45-minute warning privately, without a pu
   });
   vm.runInContext([
     namedFunction(utilities, "getGiveawayMaxEndTs"),
-    namedFunction(utilities, "sendMessage"),
+    (() => {
+      const start = utilities.indexOf("    async function sendMessage(");
+      assert.ok(start !== -1, "Missing async sendMessage");
+      const marker = "\n    }\n";
+      const end = utilities.indexOf(marker, start);
+      assert.ok(end > start, "Missing end of sendMessage");
+      return utilities.slice(start, end + marker.length);
+    })(),
     namedFunction(commands, "makeStaffAttributedReply"),
     namedFunction(commands, "hostAdjustTime")
   ].join("\n"), context);
