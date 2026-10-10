@@ -86,6 +86,30 @@
             return;
         }
 
+        // Never overwrite a recoverable opening whose public POST was ambiguous.
+        // The pending snapshot is the only path to reconcile entrants/sponsors
+        // after a reload. A second start could otherwise destroy that evidence.
+        const prior = readActiveGiveawayRawForHost(getLoggedInUsername(), {
+            migrateLegacy: true
+        });
+        if (prior.raw) {
+            try {
+                const saved = JSON.parse(prior.raw);
+                if (saved?.giveawayData?.openingCheckpoint?.status === "pending") {
+                    window.alert(
+                        "GIVEAWAY START BLOCKED: A previous opening is awaiting " +
+                        "Main Chat verification. Reload DarkPeers and recover it " +
+                        "before starting another giveaway. Its saved state was preserved."
+                    );
+                    return;
+                }
+            } catch {
+                // Unknown existing recovery data must not be overwritten.
+                window.alert("GIVEAWAY START BLOCKED: Existing recovery data could not be read safely.");
+                return;
+            }
+        }
+
         clearGiveawayLog();
 
         // Normalize and validate the giveaway amount separately so we tolerate
