@@ -1141,13 +1141,9 @@
             // checking in both public and private delivery paths.
             const potAnnouncement = `${bridgeMarker(BRIDGE_MARKERS.POT, "💰")} ` +
                 [addedPart, totalPart, donationPart, scalingPart].filter(Boolean).join(" ");
-            const announced = ctx.source === "chat"
-                ? await sendCommandResponse(author, potAnnouncement, {
-                    requireExclusiveGiveawayOwnership: true
-                })
-                : await sendMessage(potAnnouncement, {
-                    requireExclusiveGiveawayOwnership: true
-                });
+            const announced = await sendCommandResponse(author, potAnnouncement, {
+                requireExclusiveGiveawayOwnership: true
+            });
 
             if (announced === false) {
                 logEvent(
