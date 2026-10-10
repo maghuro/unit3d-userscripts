@@ -4064,6 +4064,30 @@ body.host-panel-dragging * {
             return;
         }
 
+        // Never overwrite a recoverable opening whose public POST was ambiguous.
+        // The pending snapshot is the only path to reconcile entrants/sponsors
+        // after a reload. A second start could otherwise destroy that evidence.
+        const prior = readActiveGiveawayRawForHost(getLoggedInUsername(), {
+            migrateLegacy: true
+        });
+        if (prior.raw) {
+            try {
+                const saved = JSON.parse(prior.raw);
+                if (saved?.giveawayData?.openingCheckpoint?.status === "pending") {
+                    window.alert(
+                        "GIVEAWAY START BLOCKED: A previous opening is awaiting " +
+                        "Main Chat verification. Reload DarkPeers and recover it " +
+                        "before starting another giveaway. Its saved state was preserved."
+                    );
+                    return;
+                }
+            } catch {
+                // Unknown existing recovery data must not be overwritten.
+                window.alert("GIVEAWAY START BLOCKED: Existing recovery data could not be read safely.");
+                return;
+            }
+        }
+
         clearGiveawayLog();
 
         // Normalize and validate the giveaway amount separately so we tolerate
@@ -7685,7 +7709,7 @@ body.host-panel-dragging * {
             if (normalizeUserKey(ctx.author) === normalizeUserKey(ctx.giveawayData.host)) {
                 // An explicit host !reminder is a manual override: send it now
                 // instead of applying the automatic recent-reminder suppression.
-                sendReminder({ force: true });
+                sendReminder({ force: true, commandAuthor: ctx.author });
             }
         },
 
@@ -11383,7 +11407,12 @@ body.host-panel-dragging * {
               `✨[b][color=#FB4F4F]Gift the host to add to the pot! [color=${GIFT_HINT_COLOR}]/gift ${getGiftSyntaxHostName()} AMOUNT MESSAGE[/color][/color][/b]✨` +
               silentLine +
               rigLine;
-        sendMessage(msg);
+        // Automatic interval reminders remain public so entrants can see them.
+        // A manual !reminder is command output: honor Silent Mode there.
+        if (options.commandAuthor) {
+            return sendCommandResponse(options.commandAuthor, msg);
+        }
+        return sendMessage(msg);
     }
 
     // ───────────── HTTP-based BON gifting helper ─────────────
