@@ -63,12 +63,17 @@ tabs may have seen empty storage before one posts an uncertain opening.
 For restoration, discard the earlier loaded object and re-read/revalidate
 the latest complete persisted giveaway under the lock before restoring any
 entries, sponsors or settlement. This prevents a waiting tab from replacing
-the other tab's newly committed payout checkpoint.
+the other tab's newly committed payout checkpoint. A pre-lock expired flag,
+unverified-opening flag or saved host may already be stale; do not reject on
+those before the post-lock read, which is authoritative.
 Treat `readOk: false` as a hard stop: storage-read errors, malformed
 legacy JSON and migration failures are NEVER equivalent to empty storage.
 Even an empty string in an existing recovery slot is occupied, not vacant.
 Pre-lock checks only READ; any legacy-key migration happens after locking.
 An empty legacy value is occupied/corrupt (only `null` means absent).
+Valid legacy JSON without a usable host (`{}`, `{"giveawayData":{}}`, etc.)
+is likewise occupied and unidentified: block new live openings, retain the
+original bytes, and require manual review. A known DIFFERENT host may be ignored.
 The initial snapshot loader must not clear even expired state: preserve it
 for manual review instead of altering shared recovery before locking.
 Snapshots are forbidden during balance/history/cursor preflight, before a

@@ -1100,7 +1100,17 @@
 
             const legacy = JSON.parse(legacyRaw);
             const legacyHostKey = normalizeUserKey(legacy?.giveawayData?.host);
-            if (!legacyHostKey || legacyHostKey !== requestedHostKey) {
+            if (!legacyHostKey) {
+                // Missing host identity is NOT proof of empty recovery storage.
+                // This may contain real BON settlement evidence: keep its bytes.
+                console.warn("[BON Giveaway] Hostless legacy recovery is occupied; manual review required.");
+                return {
+                    storageKey, raw: legacyRaw, hasStoredState: true,
+                    migratedLegacy: false, readOk: false
+                };
+            }
+            if (legacyHostKey !== requestedHostKey) {
+                // Only a positively identified different host may be ignored.
                 return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
             }
 
@@ -1704,44 +1714,22 @@
     }
 
     async function restoreGiveawayFromSnapshot(snap) {
-        if (!snap || !snap.giveawayData) return false;
-
-        // Do not let pre-checkpoint snapshots enter any automatic restore path,
-        // even if an alternate caller bypasses loadGiveawaySnapshot(). Keep
-        // persistent entries and paid-gift ledgers untouched for manual review.
-        const proof = snap.giveawayData.openingCheckpoint;
-        if (snap.__legacyOpeningUnverified === true ||
-            snap.__expiredBeyondGrace === true ||
-            !proof || (proof.status !== "pending" && proof.status !== "confirmed") ||
-            (proof.status === "confirmed" &&
-             (!Number.isFinite(Number(snap.giveawayData.openedAt)) ||
-              Number(snap.giveawayData.openedAt) <= 0 ||
-              !Number.isFinite(Number(snap.giveawayData.sponsorStartTs)) ||
-              Number(snap.giveawayData.sponsorStartTs) <
-                  Number(snap.giveawayData.openedAt)))) {
-            console.warn("[BON Giveaway] Legacy opening lacks verified publication proof; keeping original snapshot.");
-            window.alert(
-                "GIVEAWAY RECOVERY REQUIRES MANUAL REVIEW: This older snapshot " +
-                "does not prove that its opening was published or when it began. " +
-                "Automatic entries, countdown changes and BON settlement are blocked. " +
-                "The original recovery state was preserved."
-            );
-            return false;
-        }
+        // The earlier snapshot is only a discovery hint. Another tab may
+        // persist a newer settlement while we await the Web Lock. Classify
+        // recovery status, expiry, checkpoint and host ONLY after rereading
+        // the latest saved state under exclusive ownership.
+        if (!snap) return false;
 
         // Validate the live DarkPeers identity/Main Chat context BEFORE claiming
         // ownership or touching the recoverable snapshot. A transient/wrong chat
         // context must never destroy or mutate persisted giveaway state.
         cacheChatContext();
         const restoreHost = getLoggedInUsername();
-        const restoreExpectedHost = String(snap.giveawayData.host || "").trim();
         const restoreUserId = Math.floor(Number(OT_USER_ID));
         const restorePublicRoom = Math.floor(Number(OT_CHATROOM_ID));
         const restoreExpectedRoom = Math.floor(Number(DARKPEERS_MAIN_CHATROOM_ID));
         const restoreContextOk =
             !!restoreHost &&
-            !!restoreExpectedHost &&
-            normalizeUserKey(restoreHost) === normalizeUserKey(restoreExpectedHost) &&
             Number.isFinite(restoreUserId) &&
             restoreUserId > 0 &&
             Number.isFinite(restorePublicRoom) &&
@@ -1801,6 +1789,14 @@
                     normalizeUserKey(restoreHost) ||
                 (lockedSnapshot.giveawayData.rehearsalMode === true) !== REHEARSAL_MODE) {
                 console.warn("[BON Giveaway] Restore blocked: locked snapshot is absent, unverified or belongs to another mode/host.");
+                if (lockedSnapshot?.__legacyOpeningUnverified === true ||
+                    lockedSnapshot?.__expiredBeyondGrace === true) {
+                    window.alert(
+                        "GIVEAWAY RECOVERY REQUIRES MANUAL REVIEW: The latest saved state " +
+                        "cannot safely resume entries or BON settlement. " +
+                        "The original recovery data has been preserved."
+                    );
+                }
                 releaseTabLock();
                 return false;
             }

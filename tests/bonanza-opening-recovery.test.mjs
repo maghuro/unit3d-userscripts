@@ -806,3 +806,51 @@ test("fresh restore rejects deleted or corrupted recovery even when caller holds
   assert.match(body, /normalizeUserKey\(lockedSnapshot.giveawayData.host\)/);
   assert.match(body, /lockedSnapshot.giveawayData.rehearsalMode === true/);
 });
+
+test("valid but hostless legacy records remain occupied and block new starts", () => {
+  const examples = [
+    "{}", '{"giveawayData":{}}', '{"giveawayData":{"host":""}}',
+    '{"giveawayData":{"host":null}}', "null", '"unexpected"'
+  ];
+  for (const raw of examples) {
+    for (const migrateLegacy of [false, true]) {
+      const h = recoveryReadHarness({ legacy: raw });
+      const state = h.read("maghuro", { migrateLegacy });
+      assert.equal(state.readOk, false, `Unidentified record must fail closed: ${raw}`);
+      assert.equal(state.hasStoredState, true);
+      assert.equal(state.raw, raw);
+      assert.equal(state.migratedLegacy, false);
+      assert.deepEqual(h.events, [], "Unidentified state must not be migrated");
+    }
+  }
+  const foreignRaw = JSON.stringify({ giveawayData: { host: "different-host" } });
+  for (const migrateLegacy of [false, true]) {
+    const h = recoveryReadHarness({ legacy: foreignRaw });
+    const state = h.read("maghuro", { migrateLegacy });
+    assert.equal(state.readOk, true);
+    assert.equal(state.hasStoredState, false);
+    assert.equal(state.raw, null);
+    assert.deepEqual(h.events, []);
+  }
+});
+
+test("restore rejects stale recovery flags only after refreshing under exclusive lock", () => {
+  const start = initialization.indexOf("async function restoreGiveawayFromSnapshot(");
+  const lock = initialization.indexOf("if (!await acquireTabLock())", start);
+  const read = initialization.indexOf("const lockedRead = readActiveGiveawayRawForHost(", lock);
+  const fresh = initialization.indexOf("const lockedSnapshot = loadGiveawaySnapshot()", read);
+  const replace = initialization.indexOf("snap = lockedSnapshot;", fresh);
+  const verify = initialization.indexOf("const restoredCheckpoint = snap.giveawayData?.openingCheckpoint", replace);
+  assert.ok(start >= 0 && lock > start && read > lock && fresh > read);
+  assert.ok(replace > fresh && verify > replace);
+  const prelock = initialization.slice(start, lock);
+  assert.doesNotMatch(prelock,
+    /__expiredBeyondGrace|__legacyOpeningUnverified|openingCheckpoint|restoreExpectedHost|snap\.giveawayData/);
+  const lockedGuard = initialization.slice(fresh, replace);
+  assert.match(lockedGuard, /lockedSnapshot.__expiredBeyondGrace === true/);
+  assert.match(lockedGuard, /lockedSnapshot.__legacyOpeningUnverified === true/);
+  assert.match(lockedGuard, /normalizeUserKey\(lockedSnapshot.giveawayData.host\)/);
+  assert.match(lockedGuard, /lockedSnapshot.giveawayData.rehearsalMode === true/);
+  assert.match(lockedGuard, /releaseTabLock\(\)/);
+  assert.match(lockedGuard, /return false;/);
+});

@@ -80,6 +80,9 @@ multiple userscripts, not just BONanza.
   **Restores must also re-read and revalidate the COMPLETE latest snapshot
   under that lock**, discarding the pre-lock in-memory object: another tab
   could have persisted payout/settlement progress while ownership was queued.
+  Pre-lock `__expiredBeyondGrace`, `__legacyOpeningUnverified`, proof and
+  host data are stale hints, NEVER grounds for rejecting before the lock.
+  Classify only the latest post-lock snapshot.
   Never replace a newer committed settlement with stale recovery data.
   The recovery reader reports `readOk` separately from `raw`: a denied
   localStorage read, corrupt legacy JSON or migration failure MUST block the
@@ -87,7 +90,11 @@ multiple userscripts, not just BONanza.
   recovery slot is still an occupied (corrupt) record. Keep pre-lock reads
   read-only, performing any legacy migration under exclusive ownership.
   A legacy key containing an empty string is PRESENT, not absent: test
-  `getItem() === null` to prove absence. `loadGiveawaySnapshot()` must never
+  `getItem() === null` to prove absence. Even valid JSON without an
+  identifiable host (such as `{}` or `{"giveawayData":{}}`) remains an
+  occupied, unidentified record. Fail closed and preserve it for manual
+  review: ONLY a positively identified foreign host may be ignored.
+  `loadGiveawaySnapshot()` must never
   delete, migrate, or alter recovery storage before acquiring the Web Lock;
   stale/expired data needs manual review, not speculative cleanup.
 - **Preflight is not an opening.** Before a durable `openingCheckpoint`
