@@ -199,3 +199,10 @@ test("committed settlement retains original reminders and deadline intact", () =
   assert.equal(result.giveawayData.endTs, h.originalEnd);
   assert.deepEqual(Array.from(result.giveawayData.reminderSchedule), [45 * MINUTE]);
 });
+
+test("restored reminder count also hydrates the UI for later host/staff time changes", () => {
+  assert.match(
+    initialization,
+    /if \(remNumInput\) \{[\s\S]*?remNumInput\.value = String\(Number\.isFinite\(savedReminderCount\)/
+  );
+});
