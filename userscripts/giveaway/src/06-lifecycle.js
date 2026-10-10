@@ -1,6 +1,11 @@
     // SECTION 6: Giveaway Lifecycle
     // ───────────────────────────────────────────────────────────
 
+    // The opening POST has a 7s HTTP timeout. Allow limited transport overhead
+    // for recovering an ambiguous result, but NEVER accept an announcement
+    // sent minutes/hours later as this giveaway's opening.
+    const OPENING_POST_MAX_PUBLICATION_WINDOW_MS = 10000;
+
     // Reconcile an opening announcement against authoritative Main Chat history.
     // An HTTP timeout is NOT evidence the server rejected the POST. Never
     // release a pending opening snapshot merely because sendMessage returned
@@ -16,6 +21,19 @@
         // indistinguishable. Never auto-confirm such a snapshot or payout.
         if (!Number.isSafeInteger(afterId) || afterId <= 0) return null;
         const startedAt = Number(checkpoint.startedAt);
+        const persistedHardEnd = optionalFiniteNumber(checkpoint.windowEndAt);
+        const completedAt = optionalFiniteNumber(checkpoint.sendCompletedAt);
+        const absoluteHardEnd = startedAt + OPENING_POST_MAX_PUBLICATION_WINDOW_MS;
+        // An absent completion time means the tab may have crashed mid-POST:
+        // the pre-persisted hard window is still authoritative. A recorded
+        // completion can only NARROW the window, never extend it.
+        const windowEnd = Math.min(
+            absoluteHardEnd,
+            persistedHardEnd === null ? absoluteHardEnd : persistedHardEnd,
+            completedAt === null ? absoluteHardEnd : completedAt
+        );
+        if (!Number.isFinite(startedAt) || !Number.isFinite(windowEnd) ||
+            windowEnd <= startedAt) return null;
         const senderId = Math.floor(Number(OT_USER_ID));
         if (!Number.isFinite(senderId) || senderId <= 0) return null;
 
@@ -43,10 +61,15 @@
                     const rawTs = String(message?.created_at || "");
                     const timestamp = Date.parse(rawTs);
                     const resolutionMs = unit3dTimestampResolutionMs(rawTs);
-                    // A coarse timestamp can include the send start instant,
-                    // but an older identical announcement must not be reused.
+                    // Require the ENTIRE server timestamp bucket to be inside
+                    // the original, bounded opening POST window. A bucket that
+                    // overlaps the pre-send boundary is ambiguous and must not
+                    // confirm an unrelated same-second message. An identical
+                    // message sent after this attempt cannot confirm it either.
                     if (!Number.isFinite(timestamp) ||
-                        timestamp + resolutionMs <= startedAt) continue;
+                        !Number.isFinite(resolutionMs) || resolutionMs <= 0 ||
+                        timestamp < startedAt ||
+                        (timestamp + resolutionMs) > windowEnd) continue;
 
                     return {
                         messageId: id,
@@ -389,6 +412,7 @@
                 status: "pending",
                 startedAt: openingSendStartedAt,
                 afterMessageId,
+                windowEndAt: openingSendStartedAt + OPENING_POST_MAX_PUBLICATION_WINDOW_MS,
                 preparedMessage: preparedOpening
             };
             window.__activeTracker = tracker;
@@ -406,6 +430,17 @@
                 noFallbackOnApiException: true
             });
             if (!ownsTabLock()) return;
+            // Constrain reconciliation to the ACTUAL time of completion if
+            // this document survived the POST. If it did not, recovery uses
+            // the previously persisted bounded upper limit instead.
+            giveawayData.openingCheckpoint.sendCompletedAt = Date.now();
+            if (!snapshotGiveaway({ force: true, verifyWrite: true })) {
+                logEvent("Opening delivery checkpoint not durable",
+                    "Could not preserve the end of the opening attempt; recovery remains pending.");
+                window.alert("GIVEAWAY OPENING PAUSED: Delivery timing could not be stored. Reload to retry verification.");
+                releaseTabLock();
+                return;
+            }
 
             // Rehearsal announcements deliberately go to a private host message;
             // real openings require authoritative Main Chat confirmation.
