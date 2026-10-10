@@ -121,11 +121,17 @@
         if (prior.raw) {
             try {
                 const saved = JSON.parse(prior.raw);
-                if (saved?.giveawayData?.openingCheckpoint?.status === "pending") {
+                const proof = saved?.giveawayData?.openingCheckpoint;
+                if (saved?.giveawayData && (!proof || proof.status !== "confirmed" ||
+                    !Number.isFinite(Number(saved.giveawayData.openedAt)) ||
+                    Number(saved.giveawayData.openedAt) <= 0 ||
+                    !Number.isFinite(Number(saved.giveawayData.sponsorStartTs)) ||
+                    Number(saved.giveawayData.sponsorStartTs) <
+                        Number(saved.giveawayData.openedAt))) {
                     window.alert(
-                        "GIVEAWAY START BLOCKED: A previous opening is awaiting " +
-                        "Main Chat verification. Reload DarkPeers and recover it " +
-                        "before starting another giveaway. Its saved state was preserved."
+                        "GIVEAWAY START BLOCKED: A saved opening still requires " +
+                        "verification or manual review. The original recovery " +
+                        "snapshot must not be overwritten by a new giveaway."
                     );
                     return;
                 }
