@@ -1075,11 +1075,15 @@
     function readActiveGiveawayRawForHost(hostName = "", { migrateLegacy = false } = {}) {
         const requestedHostKey = normalizeUserKey(hostName || getLoggedInUsername());
         const storageKey = getActiveGiveawayStorageKey(requestedHostKey);
-        if (!requestedHostKey || !storageKey) return { storageKey, raw: null, migratedLegacy: false, readOk: false };
+        if (!requestedHostKey || !storageKey) return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: false };
 
         try {
             const namespacedRaw = localStorage.getItem(storageKey);
-            if (namespacedRaw) return { storageKey, raw: namespacedRaw, migratedLegacy: false, readOk: true };
+            // Empty but present storage is corrupt/recoverable, NOT vacant.
+            if (namespacedRaw !== null) return {
+                storageKey, raw: namespacedRaw, hasStoredState: true,
+                migratedLegacy: false, readOk: true
+            };
 
             // Backwards-compatible migration from pre-v1.3.24 hostname-wide storage.
             // A legacy snapshot belonging to another account is deliberately left
@@ -1087,28 +1091,31 @@
             // overwrite that foreign recovery state. Rehearsal storage never
             // imports a live legacy snapshot.
             if (REHEARSAL_MODE) {
-                return { storageKey, raw: null, migratedLegacy: false, readOk: true };
+                return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
             }
             const legacyRaw = localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY);
-            if (!legacyRaw) return { storageKey, raw: null, migratedLegacy: false, readOk: true };
+            if (!legacyRaw) return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
 
             const legacy = JSON.parse(legacyRaw);
             const legacyHostKey = normalizeUserKey(legacy?.giveawayData?.host);
             if (!legacyHostKey || legacyHostKey !== requestedHostKey) {
-                return { storageKey, raw: null, migratedLegacy: false, readOk: true };
+                return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
             }
 
             if (migrateLegacy) {
                 localStorage.setItem(storageKey, legacyRaw);
                 localStorage.removeItem(LS_ACTIVE_GIVEAWAY_LEGACY);
             }
-            return { storageKey, raw: legacyRaw, migratedLegacy: !!migrateLegacy, readOk: true };
+            return {
+                storageKey, raw: legacyRaw, hasStoredState: true,
+                migratedLegacy: !!migrateLegacy, readOk: true
+            };
         } catch (error) {
             // A failed localStorage read (including corrupt legacy JSON) is
             // NOT proof that the active recovery slot is empty. A new giveaway
             // must not overwrite existing state when read integrity is unknown.
             console.warn("[BON Giveaway] Active recovery storage read failed:", error);
-            return { storageKey, raw: null, migratedLegacy: false, readOk: false };
+            return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: false };
         }
     }
 
