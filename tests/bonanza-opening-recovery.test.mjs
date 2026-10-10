@@ -188,3 +188,23 @@ test("winners and host top-ups route command announcements privately under Silen
   assert.match(utilities, /async function sendCommandResponse\(username, messageStr, options = \{\}\)/);
   assert.match(utilities, /return sendPrivateMessage\(username, messageStr, options\)/);
 });
+
+test("recoverable uncertain opening blocks a second start from overwriting its snapshot", () => {
+  const start = lifecycle.indexOf("async function startGiveaway()");
+  const startLock = lifecycle.indexOf("await acquireTabLock()", start);
+  const safety = lifecycle.slice(start, startLock);
+  assert.match(safety, /readActiveGiveawayRawForHost\(getLoggedInUsername\(\)/);
+  assert.match(safety, /openingCheckpoint\?\.status === "pending"/);
+  assert.match(safety, /GIVEAWAY START BLOCKED/);
+});
+
+test("manual reminder follows private command routing while automatic timers remain public", () => {
+  assert.match(commands, /sendReminder\(\{ force: true, commandAuthor: ctx\.author \}\)/);
+  const reminder = utilities.slice(
+    utilities.indexOf("    function sendReminder("),
+    utilities.indexOf("    // ───────────── HTTP-based BON gifting helper")
+  );
+  assert.match(reminder, /if \(options\.commandAuthor\)/);
+  assert.match(reminder, /return sendCommandResponse\(options\.commandAuthor, msg\)/);
+  assert.match(reminder, /return sendMessage\(msg\)/);
+});
