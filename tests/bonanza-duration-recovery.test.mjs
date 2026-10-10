@@ -32,7 +32,9 @@ function recoveryHarness({
   ageMinutes,
   advertisedMinutes = 90,
   reminderCount = 1,
-  openingCheckpoint = null,
+  // Current verified snapshots may still contain legacy 90-minute values.
+  // Snapshots with no checkpoint must instead stay quarantined for manual review.
+  openingCheckpoint = { status: "confirmed" },
   settlement = null,
   closingIntent = false,
   closingNoticeSent = false
@@ -42,11 +44,13 @@ function recoveryHarness({
   const clears = [];
   const warnings = [];
   const snap = {
-    startTime: openedAt, // Legacy snapshots predate giveawayData.openedAt.
+    startTime: openedAt, // Keep the backward-compatibility timestamp field.
     giveawayData: {
       host: "maghuro",
       rehearsalMode: false,
       endTs: originalEnd,
+      openedAt,
+      sponsorStartTs: openedAt,
       openingCheckpoint,
       reminderNum: reminderCount,
       reminderSchedule: [Math.round(advertisedMinutes / (reminderCount + 1) * MINUTE)],
@@ -225,4 +229,64 @@ test("ancient uncertain opening retains recovery checkpoint without auto-settlem
   assert.equal(pending.__expiredAtLoad, true);
   assert.equal(pending.giveawayData.endTs, h.cappedEnd);
   assert.equal(h.clears.length, 0, "Never erase a possibly-public opening without authoritative reconciliation");
+});
+
+test("pre-checkpoint active legacy snapshots never auto-resume or rewrite the deadline", () => {
+  for (const ageMinutes of [5, 30, 50, 110, 3 * 24 * 60]) {
+    const h = recoveryHarness({
+      ageMinutes,
+      advertisedMinutes: 90,
+      openingCheckpoint: null
+    });
+    const state = h.restore();
+    assert.ok(state, "Old recoverable data must remain accessible for manual review");
+    assert.equal(state.__legacyOpeningUnverified, true);
+    assert.equal(state.giveawayData.endTs, h.originalEnd,
+      "Cannot cap an old post-send timestamp as if it were the public opening");
+    assert.equal(h.clears.length, 0, "Never erase unverified old giveaway data");
+    assert.ok(h.warnings.some(w => w.includes("Unverified legacy opening")));
+  }
+});
+
+test("pre-checkpoint committed and latched payouts stay intact but are not auto-resumed", () => {
+  for (const settlementState of [
+    { settlement: { committed: true, phase: "settling" } },
+    { closingIntent: true }
+  ]) {
+    const h = recoveryHarness({
+      ageMinutes: 150,
+      advertisedMinutes: 90,
+      openingCheckpoint: null,
+      ...settlementState
+    });
+    const snap = h.restore();
+    assert.ok(snap);
+    assert.equal(snap.__legacyOpeningUnverified, true);
+    assert.equal(snap.giveawayData.endTs, h.originalEnd);
+    assert.equal(h.clears.length, 0);
+  }
+});
+
+test("malformed or incomplete confirmed proof also freezes legacy settlement", () => {
+  for (const proof of [{ status: "unknown" }, { status: "confirmed" }]) {
+    const h = recoveryHarness({ ageMinutes: 5, openingCheckpoint: proof });
+    const snap = h.restore();
+    if (proof.status === "confirmed") {
+      // The valid new-format fixture includes both openedAt and sponsorStartTs.
+      assert.equal(snap.__legacyOpeningUnverified, undefined);
+    } else {
+      assert.equal(snap.__legacyOpeningUnverified, true);
+    }
+  }
+});
+
+test("restore and new-start entry points reject old snapshots before any mutation", () => {
+  assert.match(initialization, /snap\.__legacyOpeningUnverified = true/);
+  const restore = initialization.slice(
+    initialization.indexOf("async function restoreGiveawayFromSnapshot("),
+    initialization.indexOf("// Validate the live DarkPeers identity/Main Chat context BEFORE claiming")
+  );
+  assert.match(restore, /if \(snap\.__legacyOpeningUnverified === true \|\|/);
+  assert.match(restore, /return false;/);
+  assert.doesNotMatch(restore, /acquireTabLock\(/);
 });
