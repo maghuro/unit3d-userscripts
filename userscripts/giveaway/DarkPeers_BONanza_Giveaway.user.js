@@ -248,11 +248,13 @@
 //     the form, presets, host/staff time commands and restored active snapshots.
 //     Rejected !addtime / !time add attempts explain the 45-minute total
 //     limit without changing the deadline. Silent Mode sends all host/staff
-//     command replies privately; Rehearsal routes script output to host PMs.
+//     command replies privately, but explicit !reminder requests still post
+//     publicly just like automatic reminders. Rehearsal routes both to host PMs.
 //     Opening delivery is checkpointed before the POST and verified against
 //     Main Chat; a timeout preserves recovery rather than resetting. Sponsor
 //     eligibility begins after the verified publication timestamp bucket,
-//     separately from the conservative 45-minute pre-send deadline.
+//     separately from the conservative 45-minute pre-send deadline. Live
+//     openings require a valid Main Chat cursor before any public POST.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
@@ -3994,6 +3996,9 @@ body.host-panel-dragging * {
         }
 
         const afterId = optionalFiniteNumber(checkpoint.afterMessageId);
+        // A missing pre-send cursor makes same-second identical announcements
+        // indistinguishable. Never auto-confirm such a snapshot or payout.
+        if (!Number.isSafeInteger(afterId) || afterId <= 0) return null;
         const startedAt = Number(checkpoint.startedAt);
         const senderId = Math.floor(Number(OT_USER_ID));
         if (!Number.isFinite(senderId) || senderId <= 0) return null;
@@ -4014,7 +4019,7 @@ body.host-panel-dragging * {
 
                 for (const message of payload.data) {
                     const id = optionalFiniteNumber(message?.id);
-                    if (afterId !== null && id !== null && id <= afterId) continue;
+                    if (!Number.isSafeInteger(id) || id <= afterId) continue;
                     const authorId = Math.floor(Number(message?.user_id ?? message?.user?.id));
                     if (authorId !== senderId) continue;
                     if (String(message?.message ?? "") !== checkpoint.preparedMessage) continue;
@@ -4344,6 +4349,17 @@ body.host-panel-dragging * {
             const afterMessageId = REHEARSAL_MODE
                 ? null : await getLatestChatMessageId(DARKPEERS_MAIN_CHATROOM_ID);
             if (!ownsTabLock()) return;
+            if (!REHEARSAL_MODE &&
+                (!Number.isSafeInteger(afterMessageId) || afterMessageId <= 0)) {
+                logEvent("Opening blocked (Main Chat cursor)",
+                    "Unable to obtain a trustworthy pre-send Main Chat message ID. No opening was posted.");
+                window.alert(
+                    "GIVEAWAY ERROR: Cannot verify the latest Main Chat message. " +
+                    "Nothing has been posted. Please try again when DarkPeers is responding."
+                );
+                resetGiveaway();
+                return;
+            }
 
             // Deadline: conservative PRE-SEND time. Sponsorship: independently
             // verified PUBLICATION time (never the earlier request timestamp).
@@ -7734,7 +7750,7 @@ body.host-panel-dragging * {
             if (normalizeUserKey(ctx.author) === normalizeUserKey(ctx.giveawayData.host)) {
                 // An explicit host !reminder is a manual override: send it now
                 // instead of applying the automatic recent-reminder suppression.
-                sendReminder({ force: true, commandAuthor: ctx.author });
+                sendReminder({ force: true });
             }
         },
 
@@ -11432,11 +11448,10 @@ body.host-panel-dragging * {
               `✨[b][color=#FB4F4F]Gift the host to add to the pot! [color=${GIFT_HINT_COLOR}]/gift ${getGiftSyntaxHostName()} AMOUNT MESSAGE[/color][/color][/b]✨` +
               silentLine +
               rigLine;
-        // Automatic interval reminders remain public so entrants can see them.
-        // A manual !reminder is command output: honor Silent Mode there.
-        if (options.commandAuthor) {
-            return sendCommandResponse(options.commandAuthor, msg);
-        }
+        // Both scheduled reminders and explicit !reminder requests are
+        // announcements to ALL entrants, not replies to the host command.
+        // Silent Mode must not make the requested reminder invisible.
+        // Rehearsal Mode still redirects sendMessage() to the host's PM.
         return sendMessage(msg);
     }
 
