@@ -1492,7 +1492,27 @@
             const correctedDeadline = !committedSettlement && maxEndTs !== null && endTs > maxEndTs;
             if (correctedDeadline) {
                 snap.giveawayData.endTs = maxEndTs;
-                console.warn("[BON Giveaway] Recovered deadline capped at 45 minutes after public opening.");
+
+                // Legacy reminder offsets belong to the *old* deadline. Rebuild
+                // them against the capped original duration, preserving the
+                // configured reminder count. countdownTimer/nextReminderMs will
+                // discard thresholds already elapsed without replaying them.
+                const requestedReminders = Number(snap.giveawayData.reminderNum);
+                const reminderCount = Number.isFinite(requestedReminders)
+                    ? Math.max(0, Math.min(
+                        Math.floor(requestedReminders),
+                        getReminderLimits(MAX_GIVEAWAY_MINUTES)[0]
+                    ))
+                    : 0;
+                snap.giveawayData.reminderSchedule = getReminderSchedule(MAX_GIVEAWAY_MINUTES, reminderCount);
+                snap.giveawayData.reminderNum = reminderCount;
+                const cadenceSec = reminderCount > 0
+                    ? MAX_GIVEAWAY_MINUTES * 60 / (reminderCount + 1)
+                    : 0;
+                snap.giveawayData.reminderFreqSec = cadenceSec;
+                snap.giveawayData.nextReminderSec = cadenceSec;
+                snap.giveawayData.totalSeconds = MAX_GIVEAWAY_MINUTES * 60;
+                console.warn("[BON Giveaway] Recovered deadline and reminder schedule capped at 45 minutes after public opening.");
             }
             // Apply the normal one-hour restore grace to the *capped* deadline.
             // Otherwise ancient giveaways could unexpectedly resume settlement.
