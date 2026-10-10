@@ -124,6 +124,11 @@
         const prior = readActiveGiveawayRawForHost(getLoggedInUsername(), {
             migrateLegacy: true
         });
+        // localStorage failures must block starts, never look like absence.
+        if (!prior.readOk || !prior.storageKey) {
+            window.alert("GIVEAWAY START BLOCKED: Cannot read recovery storage reliably. No opening was posted.");
+            return;
+        }
         if (prior.raw) {
             try {
                 const saved = JSON.parse(prior.raw);
@@ -189,7 +194,7 @@
         const savedAfterLock = readActiveGiveawayRawForHost(getLoggedInUsername(), {
             migrateLegacy: true
         });
-        if (savedAfterLock.raw || !savedAfterLock.storageKey) {
+        if (!savedAfterLock.readOk || savedAfterLock.raw || !savedAfterLock.storageKey) {
             logEvent("Start blocked (post-lock recovery recheck)",
                 "Saved giveaway state appeared while awaiting the exclusive lock; no new opening was posted.");
             window.alert(
@@ -315,6 +320,9 @@
 
         updateRigToggleUI();
         const currentBon = await getVerifiedHostBalance({ requireServer: true, maxAgeMs: 0 });
+        // A pagehide while preflight was awaiting balance invalidates this
+        // document. Don't continue into the public opening workflow.
+        if (!ownsTabLock()) return;
 
         if (currentBon == null) {
             const startErr = "Unable to verify current BON balance.";
@@ -401,6 +409,7 @@
                 giveawayData
             });
             const sponsorBaselineReady = await tracker.bootstrapGiftHistory();
+            if (!ownsTabLock()) return;
             if (!sponsorBaselineReady) {
                 logEvent(
                     "Start aborted (Gift History baseline)",
