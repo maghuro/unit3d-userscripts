@@ -116,11 +116,95 @@ test("UI, start path, both time commands, and recovered snapshots share the hard
     lifecycle.indexOf("const totalTimeMin = parseGiveawayMinutes") <
     lifecycle.indexOf("await acquireTabLock()")
   );
-  assert.match(lifecycle, /giveawayData\.openedAt = giveawayStartTime\.getTime\(\)/);
+  assert.match(lifecycle, /giveawayData\.openedAt = openingSendStartedAt/);
   assert.match(commands, /const addMinutes = hostAdjustTime\(\+1\)/);
   assert.match(commands, /const removeMinutes = hostAdjustTime\(-1\)/);
   assert.match(commands, /const maxEndTs = getGiveawayMaxEndTs\(giveawayData\.openedAt\)/);
   assert.match(initialization, /openedAt: giveawayData\.openedAt/);
   assert.match(initialization, /const correctedDeadline = !committedSettlement && maxEndTs !== null && endTs > maxEndTs/);
   assert.match(initialization, /snap\.giveawayData\.endTs = maxEndTs/);
+});
+
+test("opening latency counts against the 45-minute cap, not in addition to it", async () => {
+  const start = lifecycle.indexOf("const openingSendStartedAt = Date.now();");
+  const end = lifecycle.indexOf("window.__activeTracker = tracker;", start);
+  assert.ok(start >= 0 && end > start);
+  const openingBlock = lifecycle.slice(
+    start,
+    end + "window.__activeTracker = tracker;".length
+  );
+  assert.match(openingBlock, /const introSent = await sendMessage\(/);
+  assert.ok(
+    openingBlock.indexOf("openingSendStartedAt = Date.now()") <
+    openingBlock.indexOf("await sendMessage(")
+  );
+
+  const sentAt = 1_800_000_000_000;
+  let clock = sentAt;
+  class FakeDate extends Date {
+    static now() { return clock; }
+  }
+  const fakeWindow = { __activeTracker: null, alert() {} };
+  const context = vm.createContext({
+    Date: FakeDate,
+    window: fakeWindow,
+    sendMessage: async () => {
+      // Message is public before its delayed API response.
+      clock += 7000;
+      return true;
+    },
+    syncGiveawayTimeLeft: data => {
+      data.timeLeft = Math.max(0, Math.ceil((data.endTs - clock) / 1000));
+    },
+    logEvent() {},
+    resetGiveaway() {}
+  });
+  const result = await vm.runInContext(`(async () => {
+    let giveawayStartTime = null;
+    const giveawayData = {};
+    const tracker = {};
+    const introMessage = "Giveaway opening";
+    const totalTimeMs = 45 * 60_000;
+    ${openingBlock}
+    return { openingSendStartedAt, started: giveawayStartTime.getTime(),
+      openedAt: giveawayData.openedAt, endTs: giveawayData.endTs,
+      timeLeft: giveawayData.timeLeft,
+      trackerStart: tracker.giveawayStartTs };
+  })()`, context);
+  assert.equal(result.openingSendStartedAt, sentAt);
+  assert.equal(result.started, sentAt);
+  assert.equal(result.openedAt, sentAt);
+  assert.equal(result.trackerStart, sentAt);
+  assert.equal(result.endTs, sentAt + 45 * 60_000);
+  assert.equal(result.timeLeft, 45 * 60 - 7);
+  assert.equal(fakeWindow.__activeTracker.giveawayStartTs, sentAt);
+});
+
+test("a failed opening message never commits its pre-send opening timestamp", async () => {
+  const start = lifecycle.indexOf("const openingSendStartedAt = Date.now();");
+  const end = lifecycle.indexOf("window.__activeTracker = tracker;", start);
+  const openingBlock = lifecycle.slice(
+    start,
+    end + "window.__activeTracker = tracker;".length
+  );
+  let resetCalls = 0;
+  const runtime = vm.createContext({
+    Date,
+    window: { __activeTracker: null, alert() {} },
+    sendMessage: async () => false,
+    logEvent() {},
+    resetGiveaway() { resetCalls++; },
+    syncGiveawayTimeLeft() {}
+  });
+  const result = await vm.runInContext(`(async () => {
+    let giveawayStartTime = null;
+    const giveawayData = {};
+    const tracker = {};
+    const introMessage = "Giveaway opening";
+    const totalTimeMs = 45 * 60_000;
+    ${openingBlock}
+    return { openedAt: giveawayData.openedAt, endTs: giveawayData.endTs };
+  })()`, runtime);
+  assert.equal(result, undefined);
+  assert.equal(resetCalls, 1);
 });
