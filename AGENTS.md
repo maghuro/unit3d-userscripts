@@ -70,13 +70,24 @@ multiple userscripts, not just BONanza.
   **Sponsor eligibility must NOT use that time.** It begins strictly after
   the independently verified publication timestamp bucket. Each Gift
   History timestamp bucket must START at/after `sponsorStartTs`, not
-  merely overlap it; this applies to calibrated and fallback parsing.
+  merely overlap it; uncalibrated history must be deferred altogether.
   Omit ambiguous boundary gifts rather than risking inflation of a real
   BON payout. Persist `sponsorStartTs` and
   use it for both live Gift History polling and reload reconciliation.
 - After acquiring the exclusive Web Lock, read saved recovery storage AGAIN
   before mutating state or posting. Another tab may have saved an uncertain
   opening while waiting for the lock; do not overwrite any such state.
+  The recovery reader reports `readOk` separately from `raw`: a denied
+  localStorage read, corrupt legacy JSON or migration failure MUST block the
+  start, never appear as empty storage.
+- **Preflight is not an opening.** Before a durable `openingCheckpoint`
+  exists, the in-memory configuration MUST NOT be snapshotted by pagehide,
+  beforeunload or other background persistence. A BFCache handoff during
+  balance/history/cursor awaits must not generate a false legacy giveaway
+  or allow the abandoned tab to post.
+- Malformed, unreadable or incomplete recovery data may contain settlement
+  evidence. Preserve its raw storage for manual investigation; a parse error
+  is not permission to delete it or start a replacement.
 - Reverify every locally **confirmed** LIVE opening during restore against
   the exact original Main Chat message ID, authenticated author, full
   announcement text, bounded send window and sponsor boundary. If that
