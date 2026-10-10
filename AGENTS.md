@@ -79,7 +79,9 @@ multiple userscripts, not just BONanza.
   opening while waiting for the lock; do not overwrite any such state.
   The recovery reader reports `readOk` separately from `raw`: a denied
   localStorage read, corrupt legacy JSON or migration failure MUST block the
-  start, never appear as empty storage.
+  start, never appear as empty storage. An empty STRING in an existing
+  recovery slot is still an occupied (corrupt) record. Keep pre-lock reads
+  read-only, performing any legacy migration under exclusive ownership.
 - **Preflight is not an opening.** Before a durable `openingCheckpoint`
   exists, the in-memory configuration MUST NOT be snapshotted by pagehide,
   beforeunload or other background persistence. A BFCache handoff during
