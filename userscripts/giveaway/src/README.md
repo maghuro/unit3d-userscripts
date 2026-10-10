@@ -44,7 +44,9 @@ An opening has two independent boundaries: `openedAt` is captured **before**
 the public opening message is sent (and determines the maximum 45-minute
 deadline), while `sponsorStartTs` is derived from the server-confirmed
 announcement timestamp, conservatively beyond its timestamp resolution
-bucket. A valid Main Chat message cursor is mandatory before any LIVE opening;
+bucket. Gift History rows are eligible only when the ENTIRE original
+timestamp bucket starts at/after `sponsorStartTs`, in calibrated and
+fallback timestamp paths. A valid Main Chat message cursor is mandatory before any LIVE opening;
 without one, abort without posting. A pre-send `openingCheckpoint`
 is durably stored before posting, including a fixed upper time boundary.
 On return, the send completion timestamp is also persisted to tighten
@@ -52,6 +54,8 @@ the admissible window. A matching server message must have its **whole
 timestamp-resolution bucket** inside the original bounded POST attempt:
 overlapping same-second buckets and later identical posts remain ambiguous.
 If delivery is ambiguous, preserve it and retry verification on reload;
+even a non-OK opening POST response must NOT trigger a second chatbox
+opening, since the server may have stored the original message.
 do not silently discard the snapshot or perform settlement.
 
 A new giveaway must not overwrite a pending opening checkpoint. Recovered
