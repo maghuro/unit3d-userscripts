@@ -36,6 +36,48 @@ Ordered source:
 14. `13-menu-validation.js`
 15. `14-internal-namespaces.js`
 
-The validation workflow rejects stale generated output. The publishing workflow rebuilds and verifies the userscript before sending the single generated file to the secret Gist.
+The validation workflow rejects stale generated output. The publishing workflow rebuilds, verifies and publishes the generated script.
 
-When changing BONanza code, edit the relevant source fragment, rebuild, and commit both the source change and the generated userscript.
+## Maintenance rule (source of truth)
+
+**Edit `userscripts/giveaway/src/*.js`, never the generated `.user.js` directly.**
+The bundle is a byte-for-byte concatenation of the 15 fragments in the
+order declared in `scripts/build-bonanza.mjs`. If you need to change the
+runtime or metadata (`@version`, `@updateURL`, etc.), edit the appropriate
+fragment (typically `00-preamble.js`), then rebuild. When the fragment list
+changes, update the build script as well.
+
+From the **repository root**, before committing:
+
+```bash
+node scripts/build-bonanza.mjs
+node scripts/build-bonanza.mjs --check
+node --check userscripts/giveaway/DarkPeers_BONanza_Giveaway.user.js
+node --test tests/bonanza-*.test.mjs
+git diff --check
+```
+
+**Commit the edited source, relevant tests/docs and the regenerated
+`userscripts/giveaway/DarkPeers_BONanza_Giveaway.user.js` together.**
+The bundle is tracked in Git; it is *not* automatically updated in the
+repository on a pull request. The validation workflow runs `--check` and
+fails if the committed bundle is stale.
+
+On pushes to `main`, `.github/workflows/publish-bonanza-gist.yml`
+**rebuilds and requires a clean bundle diff** before publishing the
+generated userscript and an independently generated `.meta.js` manifest
+to the configured Gist. A stale committed bundle fails publication; the
+workflow does not commit generated files back to GitHub. Do not manually
+maintain the Gist or its `.meta.js`.
+
+For Tampermonkey auto-updates, bump `@version` in `00-preamble.js` when
+releasing changes, and update any tests asserting the exact version.
+Preserve the existing `@namespace`, `@updateURL` and `@downloadURL`
+unless deliberately migrating the script's update identity.
+
+Because the giveaway can move real BON, cover relevant start, restore,
+timeout, settlement and idempotency boundaries with regression tests,
+and prefer rehearsal mode for browser-level checks. Do not trigger a live
+giveaway or actual BON transfers simply to validate a code change.
+
+See [the repository's agent instructions](../../../AGENTS.md).
