@@ -687,7 +687,12 @@
               `✨[b][color=#FB4F4F]Gift the host to add to the pot! [color=${GIFT_HINT_COLOR}]/gift ${getGiftSyntaxHostName()} AMOUNT MESSAGE[/color][/color][/b]✨` +
               silentLine +
               rigLine;
-        sendMessage(msg);
+        // Automatic interval reminders remain public so entrants can see them.
+        // A manual !reminder is command output: honor Silent Mode there.
+        if (options.commandAuthor) {
+            return sendCommandResponse(options.commandAuthor, msg);
+        }
+        return sendMessage(msg);
     }
 
     // ───────────── HTTP-based BON gifting helper ─────────────
