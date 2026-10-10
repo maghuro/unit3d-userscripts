@@ -1476,6 +1476,10 @@
             if (!loggedInHostKey) return null;
 
             const stored = readActiveGiveawayRawForHost(loggedInHostKey, { migrateLegacy: true });
+            if (!stored.readOk) {
+                console.warn("[BON Giveaway] Recovery storage unreadable; leaving any existing state untouched.");
+                return null;
+            }
             if (!stored.raw) return null;
             const snap = JSON.parse(stored.raw);
             if (!snap || !snap.giveawayData) return null;
@@ -1522,7 +1526,10 @@
 
             const endTs = Number(snap.giveawayData.endTs);
             if (!Number.isFinite(endTs) || endTs <= 0) {
-                clearGiveawaySnapshot();
+                // Invalid saved data can reflect an incomplete write or an
+                // in-progress payout. Preserve it for manual inspection;
+                // never erase potentially recoverable settlement evidence.
+                console.warn("[BON Giveaway] Invalid saved deadline; snapshot preserved for manual recovery.");
                 return null;
             }
 
@@ -1582,8 +1589,11 @@
             // active-giveaway grace window.
             snap.__expiredAtLoad = overdueMs >= 0 || closingSettlementLatched;
             return snap;
-        } catch {
-            clearGiveawaySnapshot();
+        } catch (error) {
+            // Malformed or temporarily unreadable snapshots must not be
+            // silently discarded; a subsequent clean read or manual analysis
+            // may be needed to prevent lost or duplicate BON payouts.
+            console.warn("[BON Giveaway] Unable to parse recovery snapshot; retaining stored data:", error);
             return null;
         }
     }
