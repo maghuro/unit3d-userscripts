@@ -261,6 +261,10 @@
 //     Gift History timestamps also must start no earlier than the verified
 //     sponsor opening boundary; HTTP error/5xx opening POSTs must never
 //     trigger a second announcement via chatbox fallback.
+//     Legacy snapshots without verified opening evidence are retained only
+//     for manual recovery (no automatic 45-minute rewrite or BON payout).
+//     Coarse Gift History calibration uncertainty is tracked, saved across
+//     reloads, and subtracted before sponsor-start eligibility checks.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
@@ -3220,6 +3224,8 @@ body.host-panel-dragging * {
                     lastMsgId: Math.max(0, Math.floor(Number(window.__activeTracker.lastMsgId) || 0)),
                     cursorInitialized: !!window.__activeTracker.cursorInitialized,
                     giftHistoryClockOffsetMs: optionalFiniteNumber(window.__activeTracker.giftHistoryClockOffsetMs),
+                    giftHistoryClockOffsetUncertaintyMs:
+                        optionalFiniteNumber(window.__activeTracker.giftHistoryClockOffsetUncertaintyMs),
                     giftHistoryInitialized: !!window.__activeTracker.giftHistoryInitialized,
                     giftHistorySeenKeys: Array.from(window.__activeTracker.giftHistorySeenKeys || []).slice(-250),
                     historyFallbackActive: !!window.__activeTracker.historyFallbackActive,
@@ -3309,6 +3315,32 @@ body.host-panel-dragging * {
                     "[BON Giveaway] Refusing restore: the saved giveaway belongs to a different authenticated host namespace."
                 );
                 return null;
+            }
+
+            // Pre-checkpoint releases never proved that an opening reached
+            // Main Chat, and their startTime was recorded AFTER the send.
+            // Preserve the original raw snapshot, including old/expired and
+            // partially-paid records, but NEVER auto-resume or auto-settle it.
+            // Rewriting its 45-minute deadline from that late startTime would
+            // also violate the absolute public-opening cap.
+            const checkpoint = snap.giveawayData.openingCheckpoint;
+            if (!checkpoint || (
+                checkpoint.status !== "pending" &&
+                checkpoint.status !== "confirmed"
+            ) || (
+                checkpoint.status === "confirmed" &&
+                (!Number.isFinite(Number(snap.giveawayData.openedAt)) ||
+                 Number(snap.giveawayData.openedAt) <= 0 ||
+                 !Number.isFinite(Number(snap.giveawayData.sponsorStartTs)) ||
+                 Number(snap.giveawayData.sponsorStartTs) <
+                     Number(snap.giveawayData.openedAt))
+            )) {
+                console.warn(
+                    "[BON Giveaway] Unverified legacy opening retained for manual review; " +
+                    "automatic resume, deadline migration and BON settlement are blocked."
+                );
+                snap.__legacyOpeningUnverified = true;
+                return snap;
             }
 
             const endTs = Number(snap.giveawayData.endTs);
@@ -3471,6 +3503,28 @@ body.host-panel-dragging * {
 
     async function restoreGiveawayFromSnapshot(snap) {
         if (!snap || !snap.giveawayData) return false;
+
+        // Do not let pre-checkpoint snapshots enter any automatic restore path,
+        // even if an alternate caller bypasses loadGiveawaySnapshot(). Keep
+        // persistent entries and paid-gift ledgers untouched for manual review.
+        const proof = snap.giveawayData.openingCheckpoint;
+        if (snap.__legacyOpeningUnverified === true ||
+            !proof || (proof.status !== "pending" && proof.status !== "confirmed") ||
+            (proof.status === "confirmed" &&
+             (!Number.isFinite(Number(snap.giveawayData.openedAt)) ||
+              Number(snap.giveawayData.openedAt) <= 0 ||
+              !Number.isFinite(Number(snap.giveawayData.sponsorStartTs)) ||
+              Number(snap.giveawayData.sponsorStartTs) <
+                  Number(snap.giveawayData.openedAt)))) {
+            console.warn("[BON Giveaway] Legacy opening lacks verified publication proof; keeping original snapshot.");
+            window.alert(
+                "GIVEAWAY RECOVERY REQUIRES MANUAL REVIEW: This older snapshot " +
+                "does not prove that its opening was published or when it began. " +
+                "Automatic entries, countdown changes and BON settlement are blocked. " +
+                "The original recovery state was preserved."
+            );
+            return false;
+        }
 
         // Validate the live DarkPeers identity/Main Chat context BEFORE claiming
         // ownership or touching the recoverable snapshot. A transient/wrong chat
@@ -3795,6 +3849,9 @@ body.host-panel-dragging * {
                 giftHistoryClockOffsetMs: savedTracker
                     ? optionalFiniteNumber(savedTracker.giftHistoryClockOffsetMs)
                     : null,
+                giftHistoryClockOffsetUncertaintyMs: savedTracker
+                    ? optionalFiniteNumber(savedTracker.giftHistoryClockOffsetUncertaintyMs)
+                    : null,
                 giftHistoryInitialized: savedTracker ? !!savedTracker.giftHistoryInitialized : false,
                 giftHistorySeenKeys: savedTracker && Array.isArray(savedTracker.giftHistorySeenKeys)
                     ? savedTracker.giftHistorySeenKeys
@@ -4111,11 +4168,17 @@ body.host-panel-dragging * {
         if (prior.raw) {
             try {
                 const saved = JSON.parse(prior.raw);
-                if (saved?.giveawayData?.openingCheckpoint?.status === "pending") {
+                const proof = saved?.giveawayData?.openingCheckpoint;
+                if (saved?.giveawayData && (!proof || proof.status !== "confirmed" ||
+                    !Number.isFinite(Number(saved.giveawayData.openedAt)) ||
+                    Number(saved.giveawayData.openedAt) <= 0 ||
+                    !Number.isFinite(Number(saved.giveawayData.sponsorStartTs)) ||
+                    Number(saved.giveawayData.sponsorStartTs) <
+                        Number(saved.giveawayData.openedAt))) {
                     window.alert(
-                        "GIVEAWAY START BLOCKED: A previous opening is awaiting " +
-                        "Main Chat verification. Reload DarkPeers and recover it " +
-                        "before starting another giveaway. Its saved state was preserved."
+                        "GIVEAWAY START BLOCKED: A saved opening still requires " +
+                        "verification or manual review. The original recovery " +
+                        "snapshot must not be overwritten by a new giveaway."
                     );
                     return;
                 }
@@ -5636,6 +5699,7 @@ body.host-panel-dragging * {
             lastMsgId = 0,
             cursorInitialized = false,
             giftHistoryClockOffsetMs = null,
+            giftHistoryClockOffsetUncertaintyMs = null,
             giftHistoryInitialized = false,
             giftHistorySeenKeys = [],
             historyFallbackActive = false,
@@ -5648,6 +5712,12 @@ body.host-panel-dragging * {
             this.lastMsgId = Math.max(0, Math.floor(Number(lastMsgId) || 0)); // persisted API cursor
             this.cursorInitialized = !!cursorInitialized;
             this.giftHistoryClockOffsetMs = optionalFiniteNumber(giftHistoryClockOffsetMs);
+            // Earlier versions stored a point-estimate without its fractional
+            // calibration error. DarkPeers Gift History has second precision,
+            // so reserve at least one complete second of unknown offset.
+            this.giftHistoryClockOffsetUncertaintyMs = Math.max(
+                1000, optionalFiniteNumber(giftHistoryClockOffsetUncertaintyMs) ?? 1000
+            );
             this.giftHistoryInitialized = !!giftHistoryInitialized;
             this.giftHistorySeenKeys = new Set(
                 (Array.isArray(giftHistorySeenKeys) ? giftHistorySeenKeys : [])
@@ -6087,7 +6157,8 @@ body.host-panel-dragging * {
                     : Number(item?.createdAtTs);
 
                 if (offset !== null && Number.isFinite(wallTs)) {
-                    const start = wallTs - offset;
+                    const start = wallTs - offset -
+                        Math.max(1000, this.giftHistoryClockOffsetUncertaintyMs ?? 1000);
                     // A gift bucket overlapping public opening is ambiguous:
                     // only an interval STARTING at/after the confirmed sponsor
                     // boundary can be safely attributed to this giveaway.
@@ -6178,10 +6249,17 @@ body.host-panel-dragging * {
                     : Number(item?.createdAtTs);
 
                 if (offset !== null && Number.isFinite(wallTs)) {
+                    // The learned offset subtracts an exact event time from
+                    // coarse Gift History time. This shifts all bucket starts
+                    // forward by the anchor event's fractional second (and,
+                    // for clustered anchors, possibly more). Use the EARLIEST
+                    // possible start, including stored calibration uncertainty.
                     const eventTs = wallTs - offset;
+                    const earliestEventTs = eventTs -
+                        Math.max(1000, this.giftHistoryClockOffsetUncertaintyMs ?? 1000);
                     // Entire Gift History timestamp bucket must be after
                     // confirmed publication, not merely overlap its boundary.
-                    const afterOpen = min === null || eventTs >= min;
+                    const afterOpen = min === null || earliestEventTs >= min;
                     if (!afterOpen) continue;
 
                     if (max === null) {
@@ -6565,21 +6643,27 @@ body.host-panel-dragging * {
                 if (!Number.isFinite(historyWallTs)) continue;
 
                 const offset = historyWallTs - Number(event.createdAtTs);
-                if (Math.abs(offset) <= MAX_PLAUSIBLE_OFFSET_MS) samples.push(offset);
+                const resolutionMs = Math.max(
+                    1, Number(item?.timestampResolutionMs) ||
+                    unit3dTimestampResolutionMs(item?.rawTimestamp)
+                );
+                if (Math.abs(offset) <= MAX_PLAUSIBLE_OFFSET_MS) {
+                    samples.push({ offset, resolutionMs });
+                }
             }
 
             if (!samples.length) return persisted;
 
             // Choose the densest 2-minute cluster, then its median. This rejects an
             // unrelated historical exact-value row without hardcoding any timezone.
-            samples.sort((a, b) => a - b);
+            samples.sort((a, b) => a.offset - b.offset);
             const CLUSTER_MS = 120_000;
             let best = [];
 
             for (let i = 0; i < samples.length; i++) {
                 const cluster = [];
                 for (let j = i; j < samples.length; j++) {
-                    if (samples[j] - samples[i] > CLUSTER_MS) break;
+                    if (samples[j].offset - samples[i].offset > CLUSTER_MS) break;
                     cluster.push(samples[j]);
                 }
                 if (cluster.length > best.length) best = cluster;
@@ -6588,8 +6672,20 @@ body.host-panel-dragging * {
             if (!best.length) return persisted;
             const mid = Math.floor(best.length / 2);
             const inferred = best.length % 2
-                ? best[mid]
-                : Math.round((best[mid - 1] + best[mid]) / 2);
+                ? best[mid].offset
+                : Math.round((best[mid - 1].offset + best[mid].offset) / 2);
+
+            // If the chosen offset is calibrated from a coarse timestamp,
+            // the true timezone offset can be up to one entire source bucket
+            // GREATER than the inferred point estimate. Include differences
+            // within the accepted anchor cluster, too. This upper error
+            // bound is persisted with the point estimate across page reloads.
+            const offsetUncertaintyMs = Math.max(
+                1000,
+                ...best.map(sample =>
+                    Math.max(0, sample.offset + sample.resolutionMs - inferred)
+                )
+            );
 
             // If we already learned a clock offset, don't replace it with a lone,
             // materially different sample. Multiple agreeing anchors may update it
@@ -6603,6 +6699,7 @@ body.host-panel-dragging * {
             }
 
             this.giftHistoryClockOffsetMs = inferred;
+            this.giftHistoryClockOffsetUncertaintyMs = offsetUncertaintyMs;
             return inferred;
         }
 
