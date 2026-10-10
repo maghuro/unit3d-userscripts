@@ -198,15 +198,113 @@ test("recoverable uncertain opening blocks a second start from overwriting its s
   assert.match(safety, /GIVEAWAY START BLOCKED/);
 });
 
-test("manual reminder follows private command routing while automatic timers remain public", () => {
-  assert.match(commands, /sendReminder\(\{ force: true, commandAuthor: ctx\.author \}\)/);
-  const reminder = utilities.slice(
-    utilities.indexOf("    function sendReminder("),
-    utilities.indexOf("    // ───────────── HTTP-based BON gifting helper")
-  );
-  assert.match(reminder, /if \(options\.commandAuthor\)/);
-  assert.match(reminder, /return sendCommandResponse\(options\.commandAuthor, msg\)/);
+test("manual !reminder uses the public broadcast path, regardless of Silent Mode", () => {
+  assert.match(commands, /sendReminder\(\{ force: true \}\)/);
+  assert.doesNotMatch(commands, /commandAuthor: ctx\.author/);
+  const reminder = extract(utilities, "function sendReminder(");
   assert.match(reminder, /return sendMessage\(msg\)/);
+  assert.doesNotMatch(reminder, /sendCommandResponse\(/);
+});
+
+function reminderHarness({ silent = false, rehearsal = false } = {}) {
+  const publicMessages = [];
+  const privateMessages = [];
+  const ctx = vm.createContext({
+    giveawayData: {
+      host: "maghuro", amount: 100, startNum: 1, endNum: 20,
+      customMessage: "Good luck!", donationPercent: 0, totalEntries: 20
+    },
+    REHEARSAL_MODE: rehearsal,
+    GENERAL_SETTINGS: { silent_mode: silent },
+    DEBUG_SETTINGS: {
+      disable_chat_output: false, suppressApiMessages: false,
+      log_chat_messages: false, verify_sendmessage: false
+    },
+    OT_USER_ID: 17, OT_CHATROOM_ID: 1, OT_CSRF_TOKEN: "token",
+    reminderRetryTimeout: null,
+    isGiveawaySettling: () => false,
+    getGiveawayRemainingMs: () => 10 * MINUTE,
+    shouldSendReminder: () => true,
+    silentNote: () => "",
+    rigNote: () => "",
+    normalizeDonationPercent: () => 0,
+    riggedMode: false,
+    BRIDGE_MARKERS: { START: "start" },
+    bridgeMarker: () => "🎁",
+    fmtBONCurrency: amount => String(amount),
+    cleanPotString: amount => amount,
+    buildWinnersAnnouncementLine: () => "1 winner",
+    parseTime: () => "10:00",
+    getGiftSyntaxHostName: () => "maghuro",
+    buildDonationContext: () => "",
+    GIFT_HINT_COLOR: "#abcdef",
+    getLoggedInUsername: () => "maghuro",
+    prepareOutgoingMessage: text => text,
+    trySendViaApi: async text => { publicMessages.push(text); return true; },
+    sendPrivateMessage: async (user, text) => {
+      privateMessages.push({ user, text });
+      return true;
+    },
+    formatRehearsalPrivateOutput: text => "[REHEARSAL] " + text,
+    sanitizeNick: x => x,
+    logEvent() {}
+  });
+  vm.runInContext([
+    extract(utilities, "async function sendMessage("),
+    extract(utilities, "function sendReminder(")
+  ].join("\n"), ctx);
+  return { send: options => ctx.sendReminder(options), publicMessages, privateMessages };
+}
+
+test("!reminder broadcasts the actual reminder to Main Chat with Silent Mode enabled", async () => {
+  const h = reminderHarness({ silent: true });
+  assert.equal(await h.send({ force: true }), true);
+  assert.equal(h.publicMessages.length, 1);
+  assert.match(h.publicMessages[0], /Ongoing giveaway for/);
+  assert.match(h.publicMessages[0], /Time left:/);
+  assert.equal(h.privateMessages.length, 0);
+});
+
+test("manual and scheduled reminders share the public chat route in normal mode", async () => {
+  const h = reminderHarness();
+  assert.equal(await h.send({ force: true }), true);
+  assert.equal(await h.send(), true);
+  assert.equal(h.publicMessages.length, 2);
+  assert.equal(h.privateMessages.length, 0);
+});
+
+test("Rehearsal Mode keeps manually requested reminders private to the host", async () => {
+  const h = reminderHarness({ silent: true, rehearsal: true });
+  assert.equal(await h.send({ force: true }), true);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.privateMessages.length, 1);
+  assert.equal(h.privateMessages[0].user, "maghuro");
+  assert.match(h.privateMessages[0].text, /\[REHEARSAL\]/);
+  assert.match(h.privateMessages[0].text, /Ongoing giveaway for/);
+});
+
+test("missing pre-send Main Chat cursor blocks live opening instead of matching an older post", async () => {
+  for (const cursor of [null, 0, -1]) {
+    const h = createHarness({ records: [goodMessage()] });
+    h.checks.afterMessageId = cursor;
+    assert.equal(await h.run(), null, "Bad cursor " + cursor + " must fail closed");
+    assert.equal(h.calls.length, 0, "No ambiguous authoritative match without a pre-send cursor");
+  }
+  const start = lifecycle.indexOf("const afterMessageId = REHEARSAL_MODE");
+  const post = lifecycle.indexOf("const introSent = await sendMessage(", start);
+  const guard = lifecycle.slice(start, post);
+  assert.match(guard, /!Number\.isSafeInteger\(afterMessageId\)/);
+  assert.match(guard, /afterMessageId <= 0/);
+  assert.match(guard, /resetGiveaway\(\)/);
+  assert.ok(guard.indexOf("resetGiveaway()") < guard.indexOf("openingCheckpoint = {"));
+});
+
+test("chat reconciliation does not accept missing IDs or records preceding the cursor", async () => {
+  const h = createHarness({ records: [
+    goodMessage({ id: null }),
+    goodMessage({ id: 100 })
+  ] });
+  assert.equal(await h.run(), null);
 });
 
 test("a confirmed opening enables sponsor accounting only after canonical reconciliation", () => {
