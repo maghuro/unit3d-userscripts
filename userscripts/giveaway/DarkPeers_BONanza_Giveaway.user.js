@@ -249,6 +249,10 @@
 //     Rejected !addtime / !time add attempts explain the 45-minute total
 //     limit without changing the deadline. Silent Mode sends all host/staff
 //     command replies privately; Rehearsal routes script output to host PMs.
+//     Opening delivery is checkpointed before the POST and verified against
+//     Main Chat; a timeout preserves recovery rather than resetting. Sponsor
+//     eligibility begins after the verified publication timestamp bucket,
+//     separately from the conservative 45-minute pre-send deadline.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
@@ -4402,11 +4406,32 @@ body.host-panel-dragging * {
                 return;
             }
 
-            try { await tracker.poll(); } catch (e) { console.error(e); }
-            sponsorsInterval = setInterval(
-                () => tracker.poll(),
-                SPONSOR_GIFT_HISTORY_POLL_MS
-            );
+            // The pre-send checkpoint deliberately starts with accounting
+            // disabled. Once publication has been verified, reconcile the
+            // canonical Gift History BEFORE re-enabling pot mutations. Otherwise
+            // !addbon stays blocked forever on a fresh, otherwise healthy start.
+            try {
+                await tracker.reconcileCanonicalSponsorAccounting({ repairStats: false });
+                if (!snapshotGiveaway({ force: true, verifyWrite: true })) {
+                    throw new Error("Opening sponsor reconciliation snapshot did not persist");
+                }
+                setSponsorAccountingVerificationState(
+                    true, "Opening and canonical Gift History sponsor boundary verified."
+                );
+            } catch (error) {
+                setSponsorAccountingVerificationState(
+                    false, "Sponsor reconciliation deferred after public opening: " +
+                    String(error?.message || error)
+                );
+                scheduleSponsorAccountingRecovery(tracker);
+            }
+
+            if (giveawayData.__sponsorAccountingVerified === true) {
+                try { await tracker.poll(); } catch (error) { console.error(error); }
+                sponsorsInterval = setInterval(
+                    () => tracker.poll(), SPONSOR_GIFT_HISTORY_POLL_MS
+                );
+            }
 
             chatReplayIgnoreBeforeTs = null;
             if (observer) {
