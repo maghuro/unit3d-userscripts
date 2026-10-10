@@ -870,7 +870,10 @@
 
                 if (offset !== null && Number.isFinite(wallTs)) {
                     const start = wallTs - offset;
-                    return (min === null || (start + resolutionMs) > min) ? [start] : [];
+                    // A gift bucket overlapping public opening is ambiguous:
+                    // only an interval STARTING at/after the confirmed sponsor
+                    // boundary can be safely attributed to this giveaway.
+                    return (min === null || start >= min) ? [start] : [];
                 }
 
                 return [
@@ -878,7 +881,7 @@
                     Number(item?.createdAtAltTs)
                 ].filter(ts =>
                     Number.isFinite(ts) &&
-                    (min === null || (ts + resolutionMs) > min)
+                    (min === null || ts >= min)
                 );
             };
 
@@ -958,7 +961,9 @@
 
                 if (offset !== null && Number.isFinite(wallTs)) {
                     const eventTs = wallTs - offset;
-                    const afterOpen = min === null || (eventTs + resolutionMs) > min;
+                    // Entire Gift History timestamp bucket must be after
+                    // confirmed publication, not merely overlap its boundary.
+                    const afterOpen = min === null || eventTs >= min;
                     if (!afterOpen) continue;
 
                     if (max === null) {
@@ -991,7 +996,7 @@
                 ].filter(Number.isFinite);
 
                 const openingCandidates = candidates.filter(ts =>
-                    min === null || (ts + resolutionMs) > min
+                    min === null || ts >= min
                 );
                 if (!openingCandidates.length) continue;
 
