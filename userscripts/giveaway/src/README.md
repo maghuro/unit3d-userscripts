@@ -58,6 +58,17 @@ even a non-OK opening POST response must NOT trigger a second chatbox
 opening, since the server may have stored the original message. Do not
 silently discard the snapshot or perform settlement.
 
+Recheck the saved state **after** acquiring the exclusive Web Lock; two
+tabs may have seen empty storage before one posts an uncertain opening.
+Reverify previously confirmed LIVE openings from authoritative Main Chat
+on every restore, requiring the same original message ID, host, exact
+text, send window and sponsor boundary. If absent or inconsistent, leave
+the snapshot untouched and pause recovery, including BON settlement.
+
+Uncalibrated Gift History rows are NEVER eligible from a guessed local
+or UTC interpretation. Keep their keys retryable until reliable clock
+calibration succeeds, and fail final canonical reconciliation otherwise.
+
 A new giveaway must not overwrite a pending or legacy unverified snapshot.
 Recovered opening checkpoints older than the normal settlement grace require
 manual review rather than automatic BON transfers. Pre-checkpoint legacy
