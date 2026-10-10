@@ -86,15 +86,19 @@ test("stale legacy giveaway is not resurrected when capped deadline exceeds reco
   // Under the old 90-minute deadline this ended 20 minutes ago and was
   // recoverable; its compliant 45-minute deadline was already 65 minutes ago.
   const h = recoveryHarness({ ageMinutes: 110 });
-  assert.equal(h.restore(), null);
-  assert.equal(h.clears.length, 1);
-  assert.ok(h.warnings.some(w => w.includes("Discarding stale expired")));
+  const state = h.restore();
+  assert.ok(state, "Expired data is preserved for manual review");
+  assert.equal(state.__expiredBeyondGrace, true);
+  assert.equal(h.clears.length, 0);
+  assert.ok(h.warnings.some(w => w.includes("preserved for manual review")));
 });
 
 test("long-abandoned giveaway cannot settle unexpectedly after a code upgrade", () => {
   const h = recoveryHarness({ ageMinutes: 3 * 24 * 60, advertisedMinutes: 120 });
-  assert.equal(h.restore(), null);
-  assert.equal(h.clears.length, 1);
+  const old = h.restore();
+  assert.ok(old);
+  assert.equal(old.__expiredBeyondGrace, true);
+  assert.equal(h.clears.length, 0);
 });
 
 test("recoverable legacy snapshot is capped and recognized as already expired", () => {
@@ -121,8 +125,10 @@ test("the ordinary expiry grace boundary still applies to the capped deadline", 
   assert.equal(withinGrace.clears.length, 0);
 
   const afterGrace = recoveryHarness({ ageMinutes: 105 + 1 / MINUTE });
-  assert.equal(afterGrace.restore(), null);
-  assert.equal(afterGrace.clears.length, 1);
+  const expired = afterGrace.restore();
+  assert.ok(expired);
+  assert.equal(expired.__expiredBeyondGrace, true);
+  assert.equal(afterGrace.clears.length, 0);
 });
 
 test("committed settlement remains recoverable without rewriting its deadline", () => {
@@ -324,4 +330,20 @@ test("unreadable recovery storage cannot trigger deletion or auto-restore", () =
   vm.runInContext(functions, runtime);
   assert.equal(runtime.loadGiveawaySnapshot(), null);
   assert.equal(clears.length, 0);
+});
+
+test("pre-lock snapshot loading never deletes expired recovery data", () => {
+  const h = recoveryHarness({ ageMinutes: 180, advertisedMinutes: 90 });
+  const preserved = h.restore();
+  assert.ok(preserved);
+  assert.equal(preserved.__expiredBeyondGrace, true);
+  assert.equal(h.clears.length, 0);
+  const loader = initialization.slice(
+    initialization.indexOf("function loadGiveawaySnapshot("),
+    initialization.indexOf("function clearSponsorAccountingRecoveryTimer(")
+  );
+  assert.doesNotMatch(loader, /clearGiveawaySnapshot\(/);
+  assert.match(loader, /migrateLegacy: false/);
+  assert.match(initialization, /snap\.__expiredBeyondGrace === true/);
+  assert.match(initialization, /lockedSnapshot.__expiredBeyondGrace === true/);
 });
