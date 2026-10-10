@@ -175,6 +175,26 @@
             return;
         }
 
+        // The check above ran BEFORE ownership was acquired. Two tabs can
+        // both see empty storage; the second may acquire the lock only after
+        // the first has posted (or checkpointed) an ambiguous opening. Read
+        // storage AGAIN while owning the lock. Any remaining snapshot is
+        // recoverable state and must not be replaced by a second opening.
+        const savedAfterLock = readActiveGiveawayRawForHost(getLoggedInUsername(), {
+            migrateLegacy: true
+        });
+        if (savedAfterLock.raw || !savedAfterLock.storageKey) {
+            logEvent("Start blocked (post-lock recovery recheck)",
+                "Saved giveaway state appeared while awaiting the exclusive lock; no new opening was posted.");
+            window.alert(
+                "GIVEAWAY START BLOCKED: A previous giveaway was saved while " +
+                "waiting for this tab's lock. Recover or resolve it before " +
+                "starting another. No new opening has been posted."
+            );
+            releaseTabLock();
+            return;
+        }
+
         if (sponsorsInterval) { clearInterval(sponsorsInterval); sponsorsInterval = null; }
         if (observer) { observer.disconnect(); observer = null; }
 
