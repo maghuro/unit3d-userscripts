@@ -810,7 +810,10 @@ test("fresh restore rejects deleted or corrupted recovery even when caller holds
 test("valid but hostless legacy records remain occupied and block new starts", () => {
   const examples = [
     "{}", '{"giveawayData":{}}', '{"giveawayData":{"host":""}}',
-    '{"giveawayData":{"host":null}}', "null", '"unexpected"'
+    '{"giveawayData":{"host":null}}', "null", '"unexpected"',
+    '{"giveawayData":{"host":[]}}', '{"giveawayData":{"host":["maghuro"]}}',
+    '{"giveawayData":{"host":{}}}', '{"giveawayData":{"host":{"user":"maghuro"}}}',
+    '{"giveawayData":{"host":123}}', '{"giveawayData":{"host":true}}'
   ];
   for (const raw of examples) {
     for (const migrateLegacy of [false, true]) {

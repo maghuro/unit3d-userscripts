@@ -2942,7 +2942,11 @@ body.host-panel-dragging * {
             if (legacyRaw === null) return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
 
             const legacy = JSON.parse(legacyRaw);
-            const legacyHostKey = normalizeUserKey(legacy?.giveawayData?.host);
+            // Never coerce an object/array/number into a plausible username:
+            // legacy recovery ownership requires an actual saved username.
+            const legacyHost = legacy?.giveawayData?.host;
+            const legacyHostKey = typeof legacyHost === "string"
+                ? normalizeUserKey(legacyHost) : "";
             if (!legacyHostKey) {
                 // Missing host identity is NOT proof of empty recovery storage.
                 // This may contain real BON settlement evidence: keep its bytes.
