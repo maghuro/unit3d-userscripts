@@ -2,7 +2,7 @@
 // @name         DarkPeers BONanza Giveaway | Maghuro Fork
 // @namespace    https://darkpeers.org/users/maghuro
 // @description  BON giveaways on DarkPeers with an optional direct contribution to the BON Pool
-// @version      1.5.14
+// @version      1.5.15
 // @author       🤖 T.R.A.V.I.S., Maghuro & M.A.E.S.T.R.O.
 // @homepageURL  https://darkpeers.org/users/maghuro
 // @updateURL    https://gist.githubusercontent.com/maghuro/da2dbfec94951990cbc54e75a9aee318/raw/DarkPeers_BONanza_Giveaway.meta.js
@@ -244,6 +244,8 @@
 //     fallback now preserves exclusive ownership, uses the chatbox-only slash-command
 //     path so an ambiguous chat-API timeout can never be mistaken for a definite
 //     no-send, and restores only the exact unsent terminal marker after durable read-back.
+//   - v1.5.15 enforces DarkPeers' 45-minute maximum from public opening across
+//     the form, presets, host/staff time commands and restored active snapshots.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
@@ -270,6 +272,7 @@
     // - MIN_ACTION_GAP_MS blocks ultra-fast repeat triggers (usually bots/double-sends)
     // - REPEAT_COMMAND_COOLDOWNS_MS prevents the same command from being spammed for identical output
     // - strikes increase lockout length for repeat offenders (decays over time)
+    const MAX_GIVEAWAY_MINUTES = 45; // DarkPeers rule: hard total cap from public opening
     const MIN_ACTION_GAP_MS = 900; // ignore triggers faster than this per user
     const ENTRY_FEEDBACK_COOLDOWN_MS = 8000; // throttle duplicate/out-of-range feedback per user
     const STRIKE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
@@ -848,7 +851,7 @@
         maxwinners: { label: "Max Winners", section: "giveaway", description: "Set max scaled winners.", usage: `!maxwinners 1-${MAX_WINNERS}`, requiresGiveaway: true, hostOnly: true,
                      args: [{ name: "count", label: "Max", type: "int", required: true, min: 1, max: MAX_WINNERS, placeholder: "max" }] },
         scale: { label: "Scale", section: "info", description: "Show scaling progress.", usage: "!scale", requiresGiveaway: true },
-        addtime: { label: "Add Time", section: "giveaway", description: "Add giveaway minutes.", usage: "!addtime <minutes>", requiresGiveaway: true, hostOnly: true,
+        addtime: { label: "Add Time", section: "giveaway", description: "Add minutes (45-minute total cap).", usage: "!addtime <minutes>", requiresGiveaway: true, hostOnly: true,
                   args: [{ name: "minutes", label: "Min", type: "int", required: true, min: 1, placeholder: "minutes" }] },
         removetime: { label: "Remove Time", section: "giveaway", description: "Remove giveaway minutes.", usage: "!removetime <minutes>", requiresGiveaway: true, hostOnly: true,
                      args: [{ name: "minutes", label: "Min", type: "int", required: true, min: 1, placeholder: "minutes" }] },
@@ -1171,7 +1174,9 @@
             type="number"
             inputmode="numeric"
             min="1"
+            max="45"
             step="1"
+            title="Maximum giveaway duration: 45 minutes"
             value="5"
             autocomplete="off"
           >
@@ -1432,7 +1437,7 @@
       <li class="section-label">Host or Staff Emergency Commands</li>
       <li class="full-span">
           <code>!time add&nbsp;N&nbsp;/&nbsp;remove&nbsp;N&nbsp;</code>
-          <span class="desc">Adjust remaining minutes</span>
+          <span class="desc">Adjust remaining minutes (45 min total maximum)</span>
       </li>
       <li><code>!rig/!unrig&nbsp;</code>  <span class="desc">Toggle rigging (visual only)</span></li>
       <li><code>!end&nbsp;[host]</code>   <span class="desc">Host: !end. Staff: !end &lt;host&gt;</span></li>
@@ -2330,8 +2335,8 @@ body.host-panel-dragging * {
         remNumInput = document.getElementById("reminderNum");
         reminderEvery = document.getElementById("reminderEvery");
 
-        // Enforce whole-number minutes in the Time field (no decimals / exponent notation)
-        // (No page refresh required; prevents accidental fractional minutes.)
+        // Enforce whole-number minutes and DarkPeers' 45-minute maximum in the UI.
+        // The start handler separately validates the value against script/DOM bypasses.
         (function enforceWholeMinutesOnTimerField() {
             if (!timerInput) return;
 
@@ -2350,10 +2355,12 @@ body.host-panel-dragging * {
                 }
 
                 if (/^\d+$/.test(v)) {
-                    const n = parseInt(v, 10);
-                    if (Number.isFinite(n) && n >= 1) {
+                    const n = Number(v);
+                    if (Number.isSafeInteger(n) && n >= 1) {
+                        const bounded = String(Math.min(n, MAX_GIVEAWAY_MINUTES));
+                        timerInput.value = bounded;
                         timerInput.setCustomValidity("");
-                        lastValid = v;
+                        lastValid = bounded;
                         return;
                     }
                 }
@@ -2776,7 +2783,11 @@ body.host-panel-dragging * {
         if (coinInput && preset.amount) coinInput.value = preset.amount;
         if (startInput && preset.startNum) startInput.value = preset.startNum;
         if (endInput && preset.endNum) endInput.value = preset.endNum;
-        if (timerInput && preset.timer) timerInput.value = preset.timer;
+        if (timerInput && preset.timer) {
+            const minutes = Number(preset.timer);
+            timerInput.value = Number.isSafeInteger(minutes) && minutes >= 1
+                ? String(Math.min(minutes, MAX_GIVEAWAY_MINUTES)) : "5";
+        }
         if (remNumInput && preset.reminders != null) remNumInput.value = preset.reminders;
         if (winnersInput && preset.winners) winnersInput.value = preset.winners;
         if (scaleWinnersToggleInput) {
@@ -3143,6 +3154,7 @@ body.host-panel-dragging * {
                     totalEntries: giveawayData.totalEntries,
                     winningNumber: giveawayData.winningNumber,
                     totalSeconds: giveawayData.totalSeconds,
+                    openedAt: giveawayData.openedAt,
                     endTs: giveawayData.endTs,
                     winnersNum: giveawayData.winnersNum,
                     baseWinnersAtStart: giveawayData.baseWinnersAtStart,
@@ -3285,8 +3297,18 @@ body.host-panel-dragging * {
                 return null;
             }
 
-            const overdueMs = Date.now() - endTs;
+            // An older release may have saved a deadline beyond the DarkPeers cap.
+            // Restrict only an uncommitted draw: committed settlement timestamps
+            // are immutable and must survive crash/reload unchanged.
+            const startTs = Number(snap.giveawayData.openedAt ?? snap.startTime);
+            const maxEndTs = getGiveawayMaxEndTs(startTs);
             const committedSettlement = snap.giveawayData?.settlement?.committed === true;
+            const correctedDeadline = !committedSettlement && maxEndTs !== null && endTs > maxEndTs;
+            if (correctedDeadline) {
+                snap.giveawayData.endTs = maxEndTs;
+                console.warn("[BON Giveaway] Recovered deadline capped at 45 minutes after public opening.");
+            }
+            const overdueMs = Date.now() - Number(snap.giveawayData.endTs);
             const closingSettlementLatched =
                 snap.giveawayData?.closingIntent === true ||
                 snap.giveawayData?.closingNoticeSent === true ||
@@ -3295,7 +3317,8 @@ body.host-panel-dragging * {
             if (
                 overdueMs > EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS &&
                 !committedSettlement &&
-                !closingSettlementLatched
+                !closingSettlementLatched &&
+                !correctedDeadline
             ) {
                 console.warn("[BON Giveaway] Discarding stale expired active snapshot; automatic settlement grace exceeded.");
                 clearGiveawaySnapshot();
@@ -3457,6 +3480,9 @@ body.host-panel-dragging * {
         try {
             // 1) Restore giveaway data
             giveawayData = snap.giveawayData;
+            const restoredOpenTs = Number(giveawayData.openedAt ?? snap.startTime);
+            giveawayData.openedAt = getGiveawayMaxEndTs(restoredOpenTs) !== null
+                ? restoredOpenTs : null;
 
             // Restore starts fail-closed for sponsor accounting. Entries and time
             // may resume, but BON mutation and settlement stay blocked until the
@@ -3578,7 +3604,8 @@ body.host-panel-dragging * {
             updateRigToggleUI();
 
             // 4) Restore start time
-            giveawayStartTime = snap.startTime ? new Date(snap.startTime) : new Date();
+            giveawayStartTime = giveawayData.openedAt !== null
+                ? new Date(giveawayData.openedAt) : new Date();
 
             lastKnownGiveawayHostKey = normUserKey(giveawayData.host) || lastKnownGiveawayHostKey;
 
@@ -3862,6 +3889,15 @@ body.host-panel-dragging * {
             return;
         }
 
+        // Validate in code, not just through the HTML max attribute: DevTools,
+        // presets or scripted property changes cannot start a longer giveaway.
+        const totalTimeMin = parseGiveawayMinutes(timerInput?.value);
+        if (totalTimeMin === null) {
+            window.alert(`DarkPeers giveaways must last between 1 and ${MAX_GIVEAWAY_MINUTES} whole minutes.`);
+            timerInput?.focus();
+            return;
+        }
+
         if (!giveawayForm.checkValidity()) {
             giveawayForm.reportValidity();
             return;
@@ -3955,8 +3991,7 @@ body.host-panel-dragging * {
         //startButton.parentElement.hidden = true;
         entriesWrapper.hidden = false;
 
-        let totalTimeMin = totalMinutes();
-        let totalTimeMs = totalTimeMin * 60000;
+        const totalTimeMs = totalTimeMin * 60000;
         let reminderNum = Math.min(Number(remNumInput.value), getReminderLimits(totalTimeMin)[0]);
         if (isNaN(reminderNum) || reminderNum < 0) reminderNum = 0;
         const schedule = getReminderSchedule(totalTimeMin, reminderNum);
@@ -3989,6 +4024,7 @@ body.host-panel-dragging * {
             totalEntries: parseInt(endInput.value, 10) - parseInt(startInput.value, 10) + 1,
             winningNumber: null,
             totalSeconds: totalTimeMs / 1000,
+            openedAt: null,
             timeLeft: totalTimeMs / 1000,
             endTs: Date.now() + (totalTimeMs),
             winnersNum,
@@ -4132,6 +4168,7 @@ body.host-panel-dragging * {
             // Public opening is the temporal boundary. The pre-opening Gift History
             // snapshot means every subsequently appearing received gift is new.
             giveawayStartTime = new Date();
+            giveawayData.openedAt = giveawayStartTime.getTime();
             tracker.giveawayStartTs = giveawayStartTime.getTime();
             // The advertised duration begins at the same public-opening boundary,
             // not while balance/history preflight or chat delivery is still running.
@@ -6998,7 +7035,7 @@ body.host-panel-dragging * {
             }
 
             const action = (args[0] || "").toLowerCase(); // "add" / "remove"
-            const minutes = parseFloat(args[1]);
+            const minutes = Number(args[1]);
             const isPriv = normalizeUserKey(author) === normalizeUserKey(giveawayData.host) || isAdmin(fancyName);
 
             if (!isPriv) return; // silently ignore non-host/non-admin
@@ -7873,16 +7910,28 @@ body.host-panel-dragging * {
             if (!isHostOrAdmin(author, fancyName, giveawayData.host)) return;
             const actionReply = makeStaffAttributedReply(ctx);
 
-            const mins = parseFloat(args[0]);
-            if (isNaN(mins) || mins <= 0) {
+            const mins = Number(args[0]);
+            if (!Number.isFinite(mins) || mins <= 0) {
                 actionReply(
                     "[color=red]Usage:[/color] !time add|remove <minutes> or !addtime|!removetime <minutes>"
                 );
                 return;
             }
 
-            const deltaMs = sign * mins * 60_000;
-            giveawayData.endTs += deltaMs; // move the deadline
+            // Limit the TOTAL duration since the public opening, not merely the
+            // remaining countdown. Host and staff use this same enforcement path.
+            const maxEndTs = getGiveawayMaxEndTs(giveawayData.openedAt);
+            const oldEndTs = Number(giveawayData.endTs);
+            const nextEndTs = oldEndTs + sign * mins * 60_000;
+            if (maxEndTs === null || !Number.isFinite(oldEndTs) || !Number.isFinite(nextEndTs)) {
+                actionReply("[color=red]Time change refused:[/color] a trustworthy giveaway opening time is unavailable.");
+                return;
+            }
+            if (nextEndTs > maxEndTs) {
+                actionReply(`[color=red]Time change refused:[/color] DarkPeers allows a maximum of ${MAX_GIVEAWAY_MINUTES} minutes from the original opening.`);
+                return;
+            }
+            giveawayData.endTs = nextEndTs;
 
             rebuildSchedule(); // rebuild reminder schedule
 
@@ -13052,9 +13101,22 @@ body.host-panel-dragging * {
     }
 
 
+    function parseGiveawayMinutes(value) {
+        const raw = String(value ?? "").trim();
+        if (!/^\d+$/.test(raw)) return null;
+        const minutes = Number(raw);
+        return Number.isSafeInteger(minutes) && minutes >= 1 && minutes <= MAX_GIVEAWAY_MINUTES
+            ? minutes : null;
+    }
+
+    function getGiveawayMaxEndTs(startTime) {
+        const startedAt = Number(startTime);
+        return Number.isFinite(startedAt) && startedAt > 0
+            ? startedAt + MAX_GIVEAWAY_MINUTES * 60_000 : null;
+    }
+
     function totalMinutes () {
-        const t = parseInt(String(timerInput?.value ?? ""), 10);
-        return (Number.isFinite(t) && t > 0) ? t : 0;
+        return parseGiveawayMinutes(timerInput?.value) ?? 0;
     }
 
     function nextReminderMs(schedule, msLeft) {
