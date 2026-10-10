@@ -11,7 +11,8 @@
     // release a pending opening snapshot merely because sendMessage returned
     // false; an announced giveaway may already exist publicly.
     async function verifyPendingGiveawayOpening(checkpoint) {
-        if (!checkpoint || checkpoint.status !== "pending" ||
+        if (!checkpoint ||
+            (checkpoint.status !== "pending" && checkpoint.status !== "confirmed") ||
             !checkpoint.preparedMessage || !Number.isFinite(Number(checkpoint.startedAt))) {
             return null;
         }
@@ -54,6 +55,11 @@
                 for (const message of payload.data) {
                     const id = optionalFiniteNumber(message?.id);
                     if (!Number.isSafeInteger(id) || id <= afterId) continue;
+                    // A confirmed checkpoint must identify the SAME original
+                    // announcement after reload. Never replace it with a later
+                    // identical post, even inside the bounded send window.
+                    if (checkpoint.status === "confirmed" &&
+                        id !== optionalFiniteNumber(checkpoint.messageId)) continue;
                     const authorId = Math.floor(Number(message?.user_id ?? message?.user?.id));
                     if (authorId !== senderId) continue;
                     if (String(message?.message ?? "") !== checkpoint.preparedMessage) continue;
