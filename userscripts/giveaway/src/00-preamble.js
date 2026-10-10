@@ -2,7 +2,7 @@
 // @name         DarkPeers BONanza Giveaway | Maghuro Fork
 // @namespace    https://darkpeers.org/users/maghuro
 // @description  BON giveaways on DarkPeers with an optional direct contribution to the BON Pool
-// @version      1.5.14
+// @version      1.5.15
 // @author       🤖 T.R.A.V.I.S., Maghuro & M.A.E.S.T.R.O.
 // @homepageURL  https://darkpeers.org/users/maghuro
 // @updateURL    https://gist.githubusercontent.com/maghuro/da2dbfec94951990cbc54e75a9aee318/raw/DarkPeers_BONanza_Giveaway.meta.js
@@ -244,6 +244,8 @@
 //     fallback now preserves exclusive ownership, uses the chatbox-only slash-command
 //     path so an ambiguous chat-API timeout can never be mistaken for a definite
 //     no-send, and restores only the exact unsent terminal marker after durable read-back.
+//   - v1.5.15 enforces DarkPeers' 45-minute maximum from public opening across
+//     the form, presets, host/staff time commands and restored active snapshots.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
