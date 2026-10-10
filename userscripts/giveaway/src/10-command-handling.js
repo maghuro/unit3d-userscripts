@@ -1193,7 +1193,23 @@
                 return;
             }
             if (nextEndTs > maxEndTs) {
-                actionReply(`[color=red]Time change refused:[/color] DarkPeers allows a maximum of ${MAX_GIVEAWAY_MINUTES} minutes from the original opening.`);
+                if (ctx.source === "chat") {
+                    // A rejected !addtime / !time add command needs a visible
+                    // explanation in Main Chat, even with Silent Mode enabled.
+                    // Retain staff attribution; Rehearsal Mode still routes
+                    // outgoing chat safely to the host's private messages.
+                    const publicReply = makeStaffAttributedReply({
+                        ...ctx,
+                        reply: (message) => sendMessage(message)
+                    });
+                    publicReply(
+                        `🚫 [color=red][b]Time limit exceeded![/b][/color] ` +
+                        `DarkPeers giveaways can last at most [b]${MAX_GIVEAWAY_MINUTES} minutes total[/b] ` +
+                        `from opening. [b]No time was added.[/b]`
+                    );
+                } else {
+                    actionReply(`[color=red]Time change refused:[/color] DarkPeers allows a maximum of ${MAX_GIVEAWAY_MINUTES} minutes from the original opening.`);
+                }
                 return;
             }
             giveawayData.endTs = nextEndTs;
