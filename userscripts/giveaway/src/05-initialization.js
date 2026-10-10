@@ -1341,6 +1341,11 @@
                     winningNumber: giveawayData.winningNumber,
                     totalSeconds: giveawayData.totalSeconds,
                     openedAt: giveawayData.openedAt,
+                    // Deadline and sponsor-window boundaries are different.
+                    sponsorStartTs: giveawayData.sponsorStartTs,
+                    openingCheckpoint: giveawayData.openingCheckpoint &&
+                        typeof giveawayData.openingCheckpoint === "object"
+                            ? { ...giveawayData.openingCheckpoint } : null,
                     endTs: giveawayData.endTs,
                     winnersNum: giveawayData.winnersNum,
                     baseWinnersAtStart: giveawayData.baseWinnersAtStart,
@@ -1525,7 +1530,8 @@
             if (
                 overdueMs > EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS &&
                 !committedSettlement &&
-                !closingSettlementLatched
+                !closingSettlementLatched &&
+                snap.giveawayData?.openingCheckpoint?.status !== "pending"
             ) {
                 console.warn("[BON Giveaway] Discarding stale expired active snapshot; automatic settlement grace exceeded.");
                 clearGiveawaySnapshot();
@@ -1685,6 +1691,66 @@
         }
 
         try {
+            // An opening may have reached Main Chat even if its POST response was
+            // lost. It was durably checkpointed BEFORE sending; never resume
+            // entries, sponsor accounting or settlement until the exact public
+            // opening is verified from authoritative chat history.
+            if (snap.giveawayData?.openingCheckpoint?.status === "pending") {
+                const verified = await verifyPendingGiveawayOpening(
+                    snap.giveawayData.openingCheckpoint
+                );
+                if (!verified) {
+                    logEvent("Opening recovery deferred",
+                        "Main Chat could not prove the uncertain opening; existing checkpoint preserved.");
+                    window.alert(
+                        "GIVEAWAY RECOVERY PAUSED: The public opening could not be verified. " +
+                        "No giveaway settlement or BON transfer will run. Retry from Main Chat later."
+                    );
+                    releaseTabLock();
+                    return false;
+                }
+
+                // Never resurrect a very old uncertain opening into automatic
+                // settlement. A human must investigate after recovery grace.
+                const overdue = Date.now() - Number(snap.giveawayData.endTs);
+                if (overdue > EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS) {
+                    logEvent("Opening recovery requires manual review",
+                        "Opening verified but its automatic settlement grace has expired.");
+                    window.alert(
+                        "GIVEAWAY RECOVERY PAUSED: An old public opening was verified, " +
+                        "but automatic settlement is unsafe after the recovery grace. " +
+                        "Keep the saved recovery state for manual review."
+                    );
+                    releaseTabLock();
+                    return false;
+                }
+
+                snap.giveawayData.sponsorStartTs = verified.sponsorStartTs;
+                snap.giveawayData.openingCheckpoint.status = "confirmed";
+                snap.giveawayData.openingCheckpoint.messageId = verified.messageId;
+                // Persist the verified boundary before any sponsor reconciliation.
+                // Do not call snapshotGiveaway yet: entries haven't been restored
+                // into memory, so serializing them now would overwrite recovery.
+                const storageKey = getActiveGiveawayStorageKey(snap.giveawayData.host);
+                if (!storageKey) {
+                    releaseTabLock();
+                    return false;
+                }
+                const persisted = { ...snap };
+                delete persisted.__expiredAtLoad;
+                const verifiedRaw = JSON.stringify(persisted);
+                try {
+                    localStorage.setItem(storageKey, verifiedRaw);
+                    if (localStorage.getItem(storageKey) !== verifiedRaw) {
+                        throw new Error("Verified opening checkpoint read-back mismatch");
+                    }
+                } catch (error) {
+                    console.warn("[BON Giveaway] Could not persist verified opening:", error);
+                    releaseTabLock();
+                    return false;
+                }
+            }
+
             // 1) Restore giveaway data
             giveawayData = snap.giveawayData;
             const restoredOpenTs = Number(giveawayData.openedAt ?? snap.startTime);
@@ -1891,7 +1957,9 @@
             const savedTracker = (snap.sponsorTracker && typeof snap.sponsorTracker === "object") ? snap.sponsorTracker : null;
             const tracker = new SponsorTracker({
                 chatroomId,
-                giveawayStartTime,
+                giveawayStartTime: new Date(
+                    giveawayData.sponsorStartTs ?? giveawayStartTime.getTime()
+                ),
                 giveawayData,
                 lastMsgId: savedTracker ? savedTracker.lastMsgId : 0,
                 cursorInitialized: savedTracker ? !!savedTracker.cursorInitialized : false,
