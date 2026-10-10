@@ -1391,6 +1391,8 @@
                     lastMsgId: Math.max(0, Math.floor(Number(window.__activeTracker.lastMsgId) || 0)),
                     cursorInitialized: !!window.__activeTracker.cursorInitialized,
                     giftHistoryClockOffsetMs: optionalFiniteNumber(window.__activeTracker.giftHistoryClockOffsetMs),
+                    giftHistoryClockOffsetUncertaintyMs:
+                        optionalFiniteNumber(window.__activeTracker.giftHistoryClockOffsetUncertaintyMs),
                     giftHistoryInitialized: !!window.__activeTracker.giftHistoryInitialized,
                     giftHistorySeenKeys: Array.from(window.__activeTracker.giftHistorySeenKeys || []).slice(-250),
                     historyFallbackActive: !!window.__activeTracker.historyFallbackActive,
@@ -2013,6 +2015,9 @@
                 cursorInitialized: savedTracker ? !!savedTracker.cursorInitialized : false,
                 giftHistoryClockOffsetMs: savedTracker
                     ? optionalFiniteNumber(savedTracker.giftHistoryClockOffsetMs)
+                    : null,
+                giftHistoryClockOffsetUncertaintyMs: savedTracker
+                    ? optionalFiniteNumber(savedTracker.giftHistoryClockOffsetUncertaintyMs)
                     : null,
                 giftHistoryInitialized: savedTracker ? !!savedTracker.giftHistoryInitialized : false,
                 giftHistorySeenKeys: savedTracker && Array.isArray(savedTracker.giftHistorySeenKeys)
