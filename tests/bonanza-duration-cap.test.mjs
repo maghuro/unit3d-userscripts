@@ -27,14 +27,16 @@ const limitFunctions = [
   namedFunction(commands, "hostAdjustTime")
 ].join("\n");
 
-function makeHarness(startedAt, initialEndTs) {
+function makeHarness(startedAt, initialEndTs, { silentMode = false } = {}) {
   const replies = [];
   const publicMessages = [];
+  const privateMessages = [];
   let schedules = 0;
   let snapshots = 0;
   const countdownHeader = { textContent: "" };
   const runtime = vm.createContext({
     MAX_GIVEAWAY_MINUTES: 45,
+    GENERAL_SETTINGS: { silent_mode: silentMode },
     isHostOrAdmin: (author, _fancyName, host) => author === host || author === "staff",
     isNonHostStaffAction: (author, _fancyName, host) => author === "staff" && author !== host,
     sanitizeNick: name => name,
@@ -50,11 +52,17 @@ function makeHarness(startedAt, initialEndTs) {
   const adjust = (sign, minutes, author = "maghuro", source = "panel") => {
     runtime.hostAdjustTime(sign)({
       author, fancyName: "", args: [String(minutes)], giveawayData, source,
-      reply: (message) => replies.push(message)
+      reply: (message) => {
+        replies.push(message);
+        if (source === "chat") {
+          if (silentMode) privateMessages.push({ author, message });
+          else publicMessages.push(message);
+        }
+      }
     });
   };
   return {
-    runtime, giveawayData, replies, publicMessages, adjust,
+    runtime, giveawayData, replies, publicMessages, privateMessages, adjust,
     get schedules() { return schedules; },
     get snapshots() { return snapshots; },
     countdownHeader
@@ -220,7 +228,7 @@ test("a rejected !addtime in chat is announced publicly without changing the tim
   assert.equal(h.giveawayData.endTs, openedAt + 40 * 60_000);
   assert.equal(h.snapshots, 0);
   assert.equal(h.schedules, 0);
-  assert.equal(h.replies.length, 0, "chat command bypasses normal private reply / Silent Mode routing");
+  assert.equal(h.replies.length, 1, "chat warning uses normal command reply routing");
   assert.equal(h.publicMessages.length, 1);
   assert.match(h.publicMessages[0], /Time limit exceeded!/);
   assert.match(h.publicMessages[0], /45 minutes total/);
@@ -254,7 +262,7 @@ test("allowed chat extensions still change the deadline and use the existing rep
   h.adjust(1, 5, "maghuro", "chat");
   assert.equal(h.giveawayData.endTs, openedAt + 45 * 60_000);
   assert.equal(h.snapshots, 1);
-  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.publicMessages.length, 1);
   assert.equal(h.replies.length, 1);
   assert.match(h.replies[0], /Added/);
 });
@@ -275,6 +283,7 @@ test("both chat aliases use the public over-limit rejection path", () => {
   assert.match(commands, /if \(action === "add"\)\s*\{\s*addMinutes\(ctxWithArg\)/);
   assert.match(commands, /source:\s*"chat"/);
   assert.match(commands, /if \(ctx\.source === "chat"\)/);
+  assert.match(commands, /GENERAL_SETTINGS\.silent_mode/);
 });
 
 test("Rehearsal Mode delivers the same 45-minute warning privately, without a public chat send", async () => {
@@ -320,7 +329,7 @@ test("Rehearsal Mode delivers the same 45-minute warning privately, without a pu
   // script-generated chat output to the host's private inbox.
   context.hostAdjustTime(+1)({
     author: "maghuro", fancyName: "", giveawayData: data,
-    source: "chat", args: ["10"], reply: () => { throw Error("Unexpected normal reply"); }
+    source: "chat", args: ["10"], reply: message => context.sendMessage(message)
   });
   await Promise.resolve();
   assert.equal(data.endTs, openedAt + 40 * 60_000);
@@ -331,4 +340,46 @@ test("Rehearsal Mode delivers the same 45-minute warning privately, without a pu
   assert.match(privateMessages[0].text, /Time limit exceeded!/);
   assert.match(privateMessages[0].text, /45 minutes total/);
   assert.match(privateMessages[0].text, /No time was added/);
+});
+
+test("host over-limit feedback follows Silent Mode and is private to the invoker", () => {
+  const openedAt = Date.now() - 10 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000, { silentMode: true });
+  h.adjust(1, 10, "maghuro", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 40 * 60_000);
+  assert.equal(h.snapshots, 0);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.privateMessages.length, 1);
+  assert.equal(h.privateMessages[0].author, "maghuro");
+  assert.match(h.privateMessages[0].message, /Time limit exceeded!/);
+  assert.match(h.privateMessages[0].message, /No time was added/);
+});
+
+test("staff over-limit feedback is also private in Silent Mode", () => {
+  const openedAt = Date.now() - 10 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 45 * 60_000, { silentMode: true });
+  h.adjust(1, 1, "staff", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 45 * 60_000);
+  assert.equal(h.snapshots, 0);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.privateMessages.length, 1);
+  assert.equal(h.privateMessages[0].author, "staff");
+  assert.match(h.privateMessages[0].message, /Time limit exceeded!/);
+});
+
+test("staff success and validation messages remain private in Silent Mode", () => {
+  const openedAt = Date.now() - 10 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000, { silentMode: true });
+  h.adjust(1, 5, "staff", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 45 * 60_000);
+  assert.equal(h.snapshots, 1);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.privateMessages.length, 1);
+  assert.match(h.privateMessages[0].message, /Added/);
+
+  h.adjust(1, "bad", "staff", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 45 * 60_000);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.privateMessages.length, 2);
+  assert.match(h.privateMessages[1].message, /Usage:/);
 });
