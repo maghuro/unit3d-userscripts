@@ -58,6 +58,9 @@ multiple userscripts, not just BONanza.
   narrow that window. Reconciliation must prove the **entire** server-side
   timestamp-resolution bucket lies inside the original opening attempt:
   same-second overlap or later identical announcements are NOT sufficient.
+  ANY opening API failure, including non-OK HTTP responses, must never
+  trigger the chatbox fallback: the server may already have published
+  the opening, so reconcile the original checkpoint instead.
   A timeout/ownership loss is ambiguous: do not erase the checkpoint,
   re-post blindly, or settle BON.
   Restore must verify the exact own-user announcement in authoritative
@@ -65,8 +68,11 @@ multiple userscripts, not just BONanza.
 - The 45-minute absolute deadline is anchored to the conservative
   **pre-send** time, so server response latency cannot extend the event.
   **Sponsor eligibility must NOT use that time.** It begins strictly after
-  the independently verified publication timestamp bucket, even if this
-  means omitting an ambiguous boundary gift. Persist `sponsorStartTs` and
+  the independently verified publication timestamp bucket. Each Gift
+  History timestamp bucket must START at/after `sponsorStartTs`, not
+  merely overlap it; this applies to calibrated and fallback parsing.
+  Omit ambiguous boundary gifts rather than risking inflation of a real
+  BON payout. Persist `sponsorStartTs` and
   use it for both live Gift History polling and reload reconciliation.
 - Leave unresolved opening checkpoints intact for later recovery; never
   overwrite them with a new giveaway or auto-settle a recovered ancient
