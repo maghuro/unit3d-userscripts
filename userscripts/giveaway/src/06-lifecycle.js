@@ -121,8 +121,10 @@
         // Never overwrite a recoverable opening whose public POST was ambiguous.
         // The pending snapshot is the only path to reconcile entrants/sponsors
         // after a reload. A second start could otherwise destroy that evidence.
+        // Pre-lock validation is read-only. Any migration of a legacy key
+        // happens only after exclusive ownership has been acquired.
         const prior = readActiveGiveawayRawForHost(getLoggedInUsername(), {
-            migrateLegacy: true
+            migrateLegacy: false
         });
         // localStorage failures must block starts, never look like absence.
         if (!prior.readOk || !prior.storageKey) {
