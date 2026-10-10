@@ -248,7 +248,7 @@ test("recoverable uncertain opening blocks a second start from overwriting its s
   const startLock = lifecycle.indexOf("await acquireTabLock()", start);
   const safety = lifecycle.slice(start, startLock);
   assert.match(safety, /readActiveGiveawayRawForHost\(getLoggedInUsername\(\)/);
-  assert.match(safety, /openingCheckpoint\?\.status === "pending"/);
+  assert.match(safety, /!proof \|\| proof\.status !== "confirmed"/);
   assert.match(safety, /GIVEAWAY START BLOCKED/);
 });
 
@@ -438,8 +438,8 @@ test("calibrated Gift History excludes a coarse gift overlapping the sponsor-ope
   const tracker = sponsorHistoryFilterHarness({ calibrated: true });
   const result = await tracker.filterHistoryRowsByWindow([
     giftAt(2000, "before"),
-    giftAt(2001, "after"),
-    giftAt(2500, "later")
+    giftAt(3101, "after"),
+    giftAt(3500, "later")
   ], 2000.5, 4500);
   assert.equal(result.accepted.length, 2);
   assert.equal(result.accepted[0].historyKey, "after");
@@ -461,7 +461,7 @@ test("even without a closing timestamp, an overlapping pre-opening gift is not s
   tracker.data.endTs = null;
   const result = await tracker.filterHistoryRowsByWindow([
     giftAt(1999, "old"),
-    giftAt(2001, "new")
+    giftAt(3101, "new")
   ], 2000.5, null);
   assert.equal(result.accepted.length, 1);
   assert.equal(result.accepted[0].historyKey, "new");
@@ -520,4 +520,54 @@ test("opening never falls back when the API is disabled or returns false before 
     }), false);
     assert.equal(fallbackCalls, 0);
   }
+});
+
+test("calibration fractional bias cannot turn a pre-opening gift into a sponsor", async () => {
+  const tracker = sponsorHistoryFilterHarness({ calibrated: true });
+  // A calibration anchor at .750s produces offset -750ms for a coarse
+  // Gift History .000s bucket. Without uncertainty the gift falsely moves
+  // 750ms later and falls beyond the 3000.5ms opening boundary.
+  tracker.giftHistoryClockOffsetMs = -750;
+  tracker.giftHistoryClockOffsetUncertaintyMs = 1000;
+  const result = await tracker.filterHistoryRowsByWindow([
+    giftAt(2500, "before"),
+    giftAt(4250, "after")
+  ], 3000.5, 4500);
+  assert.deepEqual(result.accepted.map(x => x.historyKey), ["after"]);
+});
+
+test("the inferred calibration error is propagated and conserved", () => {
+  const start = sponsorship.indexOf("        inferGiftHistoryClockOffset(");
+  const end = sponsorship.indexOf("\n        matchGiftEventsToRows(", start);
+  assert.ok(start >= 0 && end > start);
+  const method = sponsorship.slice(start, end);
+  const context = vm.createContext({
+    optionalFiniteNumber: x => x == null ? null : Number(x),
+    normalizeUserKey: x => String(x || "").toLowerCase(),
+    unit3dTimestampResolutionMs: () => 1000
+  });
+  vm.runInContext(
+    `class CalibrationTest { ${method} } this.CalibrationTest = CalibrationTest;`,
+    context
+  );
+  const tracker = new context.CalibrationTest();
+  tracker.giftHistoryClockOffsetMs = null;
+  const offset = tracker.inferGiftHistoryClockOffset(
+    [{ gifter: "sponsor", recipient: "host", rawAmount: 100, createdAtTs: 2750 }],
+    [{ sender: "sponsor", recipient: "host", amount: 100, createdAtAltTs: 2000,
+       rawTimestamp: "2026-10-10 11:00:02", timestampResolutionMs: 1000 }]
+  );
+  assert.equal(offset, -750);
+  assert.ok(tracker.giftHistoryClockOffsetUncertaintyMs >= 1000);
+});
+
+test("clock-offset uncertainty survives sponsor snapshot and restore", () => {
+  const load = initialization;
+  const sponsorshipTrackerStart = sponsorship.slice(
+    sponsorship.indexOf("    class SponsorTracker {"),
+    sponsorship.indexOf("        /* ---- poll for any chat messages since last cursor ---- */")
+  );
+  assert.match(sponsorshipTrackerStart, /giftHistoryClockOffsetUncertaintyMs = null/);
+  assert.match(load, /giftHistoryClockOffsetUncertaintyMs:\s*optionalFiniteNumber\(window\.__activeTracker\.giftHistoryClockOffsetUncertaintyMs\)/);
+  assert.match(load, /giftHistoryClockOffsetUncertaintyMs: savedTracker/);
 });
