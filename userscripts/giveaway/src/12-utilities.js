@@ -1751,6 +1751,16 @@
             try {
                 if (await trySendViaApi(messageStr)) return true;
             } catch (e) {
+                // An opening POST may already have committed before its reply
+                // timed out. Never issue a second, chatbox-based announcement
+                // during that uncertainty; the persisted opening checkpoint
+                // must be reconciled from authoritative Main Chat first.
+                if (options?.noFallbackOnApiException === true) {
+                    if (DEBUG_SETTINGS.log_chat_messages) {
+                        console.warn("Opening API result ambiguous; leaving checkpoint for verification:", e);
+                    }
+                    return false;
+                }
                 if (DEBUG_SETTINGS.log_chat_messages) console.warn("API send failed, falling back to chatbox method:", e);
                 if (DEBUG_SETTINGS.verify_sendmessage) console.debug("sendMessage: API send failed, falling back to chatbox method");
             }
