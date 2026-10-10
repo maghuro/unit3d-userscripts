@@ -813,7 +813,7 @@
                 const announcement =
                     `[b][color=${SCALING_ACCENT_COLOR}]Host adjustment:[/color][/b] ` +
                     `[b]Winners ${direction}[/b]: [b][color=#5DE2E7]${prevEffective} → ${newCount} (${sign}${delta})[/color][/b].`;
-                sendMessage(announcement);
+                reply(announcement);
                 flashWinnersUI();
                 logEvent("Host adjusted winners", `${prevEffective} -> ${newCount} (${sign}${delta})`);
             }
@@ -1136,11 +1136,18 @@
     
             snapshotGiveaway({ force: true });
 
-            const announced = await sendMessage(
-                `${bridgeMarker(BRIDGE_MARKERS.POT, "💰")} ` +
-                [addedPart, totalPart, donationPart, scalingPart].filter(Boolean).join(" "),
-                { requireExclusiveGiveawayOwnership: true }
-            );
+            // Command-generated pot announcements must honor Silent Mode.
+            // Route privately to the invoking host there; preserve ownership
+            // checking in both public and private delivery paths.
+            const potAnnouncement = `${bridgeMarker(BRIDGE_MARKERS.POT, "💰")} ` +
+                [addedPart, totalPart, donationPart, scalingPart].filter(Boolean).join(" ");
+            const announced = ctx.source === "chat"
+                ? await sendCommandResponse(author, potAnnouncement, {
+                    requireExclusiveGiveawayOwnership: true
+                })
+                : await sendMessage(potAnnouncement, {
+                    requireExclusiveGiveawayOwnership: true
+                });
 
             if (announced === false) {
                 logEvent(
