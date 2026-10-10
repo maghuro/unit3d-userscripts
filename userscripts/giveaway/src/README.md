@@ -60,10 +60,17 @@ silently discard the snapshot or perform settlement.
 
 Recheck the saved state **after** acquiring the exclusive Web Lock; two
 tabs may have seen empty storage before one posts an uncertain opening.
+For restoration, discard the earlier loaded object and re-read/revalidate
+the latest complete persisted giveaway under the lock before restoring any
+entries, sponsors or settlement. This prevents a waiting tab from replacing
+the other tab's newly committed payout checkpoint.
 Treat `readOk: false` as a hard stop: storage-read errors, malformed
 legacy JSON and migration failures are NEVER equivalent to empty storage.
 Even an empty string in an existing recovery slot is occupied, not vacant.
 Pre-lock checks only READ; any legacy-key migration happens after locking.
+An empty legacy value is occupied/corrupt (only `null` means absent).
+The initial snapshot loader must not clear even expired state: preserve it
+for manual review instead of altering shared recovery before locking.
 Snapshots are forbidden during balance/history/cursor preflight, before a
 persisted opening checkpoint exists, including pagehide/BFCache/unload.
 Keep malformed or unreadable recovery records intact for manual review
