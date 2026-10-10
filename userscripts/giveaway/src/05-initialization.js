@@ -1589,9 +1589,13 @@
                 !closingSettlementLatched &&
                 snap.giveawayData?.openingCheckpoint?.status !== "pending"
             ) {
-                console.warn("[BON Giveaway] Discarding stale expired active snapshot; automatic settlement grace exceeded.");
-                clearGiveawaySnapshot();
-                return null;
+                // This loader also runs BEFORE acquiring the Web Lock.
+                // Deleting a stale recovery slot here could erase another
+                // tab's in-progress settlement or manual recovery evidence.
+                // Preserve it and block auto-resume, never clear it on read.
+                console.warn("[BON Giveaway] Expired active snapshot preserved for manual review; automatic settlement grace exceeded.");
+                snap.__expiredBeyondGrace = true;
+                return snap;
             }
 
             // Once settlement is committed OR the closing latch has been persisted,
@@ -1707,6 +1711,7 @@
         // persistent entries and paid-gift ledgers untouched for manual review.
         const proof = snap.giveawayData.openingCheckpoint;
         if (snap.__legacyOpeningUnverified === true ||
+            snap.__expiredBeyondGrace === true ||
             !proof || (proof.status !== "pending" && proof.status !== "confirmed") ||
             (proof.status === "confirmed" &&
              (!Number.isFinite(Number(snap.giveawayData.openedAt)) ||
@@ -1790,6 +1795,7 @@
             const lockedSnapshot = loadGiveawaySnapshot();
             if (!ownsTabLock() || !lockedSnapshot ||
                 lockedSnapshot.__legacyOpeningUnverified === true ||
+                lockedSnapshot.__expiredBeyondGrace === true ||
                 !lockedSnapshot.giveawayData ||
                 normalizeUserKey(lockedSnapshot.giveawayData.host) !==
                     normalizeUserKey(restoreHost) ||
