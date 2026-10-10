@@ -1741,6 +1741,33 @@
         }
 
         try {
+            // Local storage alone is not authoritative evidence of a public
+            // opening. For a previously confirmed LIVE giveaway, prove that
+            // the exact original message ID/host/text/timestamp still exists
+            // in Main Chat before restoring entries, pot or settlement. The
+            // verifier checks the original bounded POST window and cursor.
+            const restoredCheckpoint = snap.giveawayData?.openingCheckpoint;
+            if (!REHEARSAL_MODE && restoredCheckpoint?.status === "confirmed") {
+                const verified = await verifyPendingGiveawayOpening(restoredCheckpoint);
+                const savedSponsorStart = optionalFiniteNumber(
+                    snap.giveawayData.sponsorStartTs
+                );
+                if (!verified ||
+                    verified.messageId !== optionalFiniteNumber(restoredCheckpoint.messageId) ||
+                    savedSponsorStart === null ||
+                    verified.sponsorStartTs !== savedSponsorStart) {
+                    logEvent("Confirmed opening recovery deferred",
+                        "Authoritative Main Chat could not reprove the exact saved opening and sponsor boundary.");
+                    window.alert(
+                        "GIVEAWAY RECOVERY PAUSED: The saved opening could not " +
+                        "be verified again against Main Chat. No entries, " +
+                        "sponsor updates or BON settlement will be resumed."
+                    );
+                    releaseTabLock();
+                    return false;
+                }
+            }
+
             // An opening may have reached Main Chat even if its POST response was
             // lost. It was durably checkpointed BEFORE sending; never resume
             // entries, sponsor accounting or settlement until the exact public
