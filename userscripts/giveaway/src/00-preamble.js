@@ -255,6 +255,9 @@
 //     eligibility begins after the verified publication timestamp bucket,
 //     separately from the conservative 45-minute pre-send deadline. Live
 //     openings require a valid Main Chat cursor before any public POST.
+//     Only exact announcements whose complete server timestamp bucket lies
+//     within a persisted, bounded opening attempt can confirm publication;
+//     later repeated or overlapping same-second announcements are rejected.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
