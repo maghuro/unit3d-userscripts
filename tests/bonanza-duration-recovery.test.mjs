@@ -286,15 +286,18 @@ test("malformed or incomplete confirmed proof also freezes legacy settlement", (
   }
 });
 
-test("restore and new-start entry points reject old snapshots before any mutation", () => {
+test("legacy recovery is quarantined using the locked snapshot before any mutation", () => {
   assert.match(initialization, /snap\.__legacyOpeningUnverified = true/);
-  const restore = initialization.slice(
-    initialization.indexOf("async function restoreGiveawayFromSnapshot("),
-    initialization.indexOf("// Validate the live DarkPeers identity/Main Chat context BEFORE claiming")
-  );
-  assert.match(restore, /if \(snap\.__legacyOpeningUnverified === true \|\|/);
-  assert.match(restore, /return false;/);
-  assert.doesNotMatch(restore, /acquireTabLock\(/);
+  const restoreStart = initialization.indexOf("async function restoreGiveawayFromSnapshot(");
+  const lock = initialization.indexOf("if (!await acquireTabLock())", restoreStart);
+  const loaded = initialization.indexOf("const lockedSnapshot = loadGiveawaySnapshot()", lock);
+  const hydrate = initialization.indexOf("// 1) Restore giveaway data", loaded);
+  assert.ok(restoreStart >= 0 && lock > restoreStart && loaded > lock && hydrate > loaded);
+  assert.doesNotMatch(initialization.slice(restoreStart, lock), /snap\.__legacyOpeningUnverified/);
+  const guard = initialization.slice(loaded, hydrate);
+  assert.match(guard, /lockedSnapshot.__legacyOpeningUnverified === true/);
+  assert.match(guard, /releaseTabLock\(\)/);
+  assert.match(guard, /return false;/);
 });
 
 test("malformed recovery data is preserved without any silent deletion", () => {
@@ -344,6 +347,8 @@ test("pre-lock snapshot loading never deletes expired recovery data", () => {
   );
   assert.doesNotMatch(loader, /clearGiveawaySnapshot\(/);
   assert.match(loader, /migrateLegacy: false/);
-  assert.match(initialization, /snap\.__expiredBeyondGrace === true/);
+  const restoreStart = initialization.indexOf("async function restoreGiveawayFromSnapshot(");
+  const lock = initialization.indexOf("if (!await acquireTabLock())", restoreStart);
+  assert.doesNotMatch(initialization.slice(restoreStart, lock), /snap\.__expiredBeyondGrace === true/);
   assert.match(initialization, /lockedSnapshot.__expiredBeyondGrace === true/);
 });

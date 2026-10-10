@@ -3584,7 +3584,6 @@ body.host-panel-dragging * {
                 "[BON Giveaway] Restore deferred: DarkPeers identity/Main Chat context is not trustworthy.",
                 {
                     restoreHost,
-                    expectedHost: restoreExpectedHost,
                     userId: restoreUserId,
                     publicRoom: restorePublicRoom,
                     expectedRoom: restoreExpectedRoom,
