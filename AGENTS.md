@@ -76,8 +76,19 @@ multiple userscripts, not just BONanza.
   use it for both live Gift History polling and reload reconciliation.
 - Leave unresolved opening checkpoints intact for later recovery; never
   overwrite them with a new giveaway or auto-settle a recovered ancient
-  opening beyond the one-hour expiry grace. Keep all BON-moving operations
-  blocked while publication or sponsor timing remains unverified.
+  opening beyond the one-hour expiry grace. **Pre-checkpoint legacy snapshots
+  without proven publication and a conservative pre-send opening time are
+  quarantined unchanged for MANUAL review**, including already-expired or
+  committed settlement state. Never cap their deadlines using a post-send
+  `startTime` or automatically resume entries and BON settlement. Never
+  overwrite such a preserved snapshot with a new start.
+- A Gift History clock offset calibrated against precise notification/chat
+  events and second-precision history rows has **fractional calibration
+  uncertainty**. Persist an upper error bound with the inferred offset and
+  subtract it from the calibrated bucket start BEFORE checking
+  `sponsorStartTs`. This also applies to the boundary-evidence path and
+  across reloads. Keep all BON-moving operations blocked while publication
+  or sponsor timing remains unverified.
 - In **Silent Mode**, ordinary command replies (staff responses, errors,
   `!winners`, `!addbon` etc.) use private messages. **`!reminder` is NOT
   an ordinary reply:** it explicitly requests an announcement for everyone.
