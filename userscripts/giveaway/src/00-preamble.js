@@ -248,11 +248,13 @@
 //     the form, presets, host/staff time commands and restored active snapshots.
 //     Rejected !addtime / !time add attempts explain the 45-minute total
 //     limit without changing the deadline. Silent Mode sends all host/staff
-//     command replies privately; Rehearsal routes script output to host PMs.
+//     command replies privately, but explicit !reminder requests still post
+//     publicly just like automatic reminders. Rehearsal routes both to host PMs.
 //     Opening delivery is checkpointed before the POST and verified against
 //     Main Chat; a timeout preserves recovery rather than resetting. Sponsor
 //     eligibility begins after the verified publication timestamp bucket,
-//     separately from the conservative 45-minute pre-send deadline.
+//     separately from the conservative 45-minute pre-send deadline. Live
+//     openings require a valid Main Chat cursor before any public POST.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
