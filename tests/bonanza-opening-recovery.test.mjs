@@ -446,14 +446,24 @@ test("calibrated Gift History excludes a coarse gift overlapping the sponsor-ope
   assert.equal(result.accepted[1].historyKey, "later");
 });
 
-test("fallback Gift History interpretations exclude overlapping opening buckets", async () => {
+test("uncalibrated Gift History defers ALL gifts rather than guessing a timezone", async () => {
   const tracker = sponsorHistoryFilterHarness({ calibrated: false });
   const result = await tracker.filterHistoryRowsByWindow([
     giftAt(2000, "before"),
-    giftAt(2001, "after")
+    giftAt(3101, "apparently-after")
   ], 2000.5, 4500);
-  assert.equal(result.accepted.length, 1);
-  assert.equal(result.accepted[0].historyKey, "after");
+  assert.equal(result.accepted.length, 0);
+  assert.deepEqual(Array.from(result.retryableKeys).sort(), ["apparently-after", "before"]);
+});
+
+test("uncalibrated interpretations remain unverified even with no closing cutoff", async () => {
+  const tracker = sponsorHistoryFilterHarness({ calibrated: false });
+  tracker.data.endTs = null;
+  const result = await tracker.filterHistoryRowsByWindow([
+    giftAt(3101, "unresolved")
+  ], 2000.5, null);
+  assert.equal(result.accepted.length, 0);
+  assert.deepEqual(Array.from(result.retryableKeys), ["unresolved"]);
 });
 
 test("even without a closing timestamp, an overlapping pre-opening gift is not sponsored", async () => {
@@ -571,4 +581,59 @@ test("clock-offset uncertainty survives sponsor snapshot and restore", () => {
   assert.match(sponsorshipTrackerStart, /giftHistoryClockOffsetUncertaintyMs = null/);
   assert.match(load, /giftHistoryClockOffsetUncertaintyMs:\s*optionalFiniteNumber\(window\.__activeTracker\.giftHistoryClockOffsetUncertaintyMs\)/);
   assert.match(load, /giftHistoryClockOffsetUncertaintyMs: savedTracker/);
+});
+
+test("starting a new giveaway repeats recovery snapshot check inside the acquired lock", () => {
+  const start = lifecycle.indexOf("async function startGiveaway()");
+  const beforeLock = lifecycle.indexOf("const prior = readActiveGiveawayRawForHost(", start);
+  const locked = lifecycle.indexOf("if (!await acquireTabLock())", start);
+  const afterLock = lifecycle.indexOf("const savedAfterLock = readActiveGiveawayRawForHost(", locked);
+  const firstMutation = lifecycle.indexOf("if (sponsorsInterval)", afterLock);
+  const guard = lifecycle.slice(afterLock, firstMutation);
+  assert.ok(start >= 0 && beforeLock > start && locked > beforeLock);
+  assert.ok(afterLock > locked && firstMutation > afterLock);
+  assert.match(guard, /if \(savedAfterLock\.raw \|\| !savedAfterLock\.storageKey\)/);
+  assert.match(guard, /releaseTabLock\(\)/);
+  assert.match(guard, /return;/);
+});
+
+test("authoritatively confirmed opening must reverify identical original message ID", async () => {
+  const valid = createHarness({ records: [goodMessage()] });
+  valid.checks.status = "confirmed";
+  valid.checks.messageId = 101;
+  const result = await valid.run();
+  assert.ok(result);
+  assert.equal(result.messageId, 101);
+
+  const altered = createHarness({ records: [goodMessage({ id: 102 })] });
+  altered.checks.status = "confirmed";
+  altered.checks.messageId = 101;
+  assert.equal(await altered.run(), null);
+
+  const missing = createHarness({ records: [goodMessage()] });
+  missing.checks.status = "confirmed";
+  assert.equal(await missing.run(), null);
+});
+
+test("confirmed restore verifies Main Chat before reloading entries or settlement", () => {
+  const begin = initialization.indexOf("async function restoreGiveawayFromSnapshot(");
+  const afterLock = initialization.indexOf("if (!await acquireTabLock())", begin);
+  const check = initialization.indexOf("restoredCheckpoint?.status === \"confirmed\"", afterLock);
+  const verify = initialization.indexOf("await verifyPendingGiveawayOpening(restoredCheckpoint)", check);
+  const restoreEntries = initialization.indexOf("// 1) Restore giveaway data", verify);
+  assert.ok(begin >= 0 && afterLock > begin && check > afterLock);
+  assert.ok(verify > check && restoreEntries > verify);
+  const guard = initialization.slice(check, restoreEntries);
+  assert.match(guard, /verified\.messageId !== optionalFiniteNumber\(restoredCheckpoint\.messageId\)/);
+  assert.match(guard, /verified\.sponsorStartTs !== savedSponsorStart/);
+  assert.match(guard, /releaseTabLock\(\)/);
+  assert.match(guard, /return false;/);
+});
+
+test("unverified history keys remain retryable across polling and block canonical payout", () => {
+  assert.match(sponsorship, /if \(min !== null && offset === null\)/);
+  assert.match(sponsorship, /retryableKeys: new Set\(/);
+  assert.match(sponsorship, /if \(!item\.historyKey \|\| retryableBoundaryKeys\.has\(item\.historyKey\)\) continue/);
+  assert.match(sponsorship, /if \(filtered\.retryableKeys\.size\)/);
+  assert.match(sponsorship, /Gift History reconciliation found timestamp-boundary rows/);
 });
