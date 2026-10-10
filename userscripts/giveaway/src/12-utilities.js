@@ -1619,11 +1619,11 @@
         return sendMessage(`/msg ${to} ${body}`, options);
     }
 
-    async function sendCommandResponse(username, messageStr) {
+    async function sendCommandResponse(username, messageStr, options = {}) {
         if (GENERAL_SETTINGS.silent_mode) {
-            return sendPrivateMessage(username, messageStr);
+            return sendPrivateMessage(username, messageStr, options);
         }
-        return sendMessage(messageStr);
+        return sendMessage(messageStr, options);
     }
 
     /** Prepare a message for sending: obfuscate "giveaway" and apply number formatting. */
