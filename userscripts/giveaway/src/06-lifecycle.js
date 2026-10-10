@@ -12,6 +12,9 @@
         }
 
         const afterId = optionalFiniteNumber(checkpoint.afterMessageId);
+        // A missing pre-send cursor makes same-second identical announcements
+        // indistinguishable. Never auto-confirm such a snapshot or payout.
+        if (!Number.isSafeInteger(afterId) || afterId <= 0) return null;
         const startedAt = Number(checkpoint.startedAt);
         const senderId = Math.floor(Number(OT_USER_ID));
         if (!Number.isFinite(senderId) || senderId <= 0) return null;
@@ -32,7 +35,7 @@
 
                 for (const message of payload.data) {
                     const id = optionalFiniteNumber(message?.id);
-                    if (afterId !== null && id !== null && id <= afterId) continue;
+                    if (!Number.isSafeInteger(id) || id <= afterId) continue;
                     const authorId = Math.floor(Number(message?.user_id ?? message?.user?.id));
                     if (authorId !== senderId) continue;
                     if (String(message?.message ?? "") !== checkpoint.preparedMessage) continue;
@@ -362,6 +365,17 @@
             const afterMessageId = REHEARSAL_MODE
                 ? null : await getLatestChatMessageId(DARKPEERS_MAIN_CHATROOM_ID);
             if (!ownsTabLock()) return;
+            if (!REHEARSAL_MODE &&
+                (!Number.isSafeInteger(afterMessageId) || afterMessageId <= 0)) {
+                logEvent("Opening blocked (Main Chat cursor)",
+                    "Unable to obtain a trustworthy pre-send Main Chat message ID. No opening was posted.");
+                window.alert(
+                    "GIVEAWAY ERROR: Cannot verify the latest Main Chat message. " +
+                    "Nothing has been posted. Please try again when DarkPeers is responding."
+                );
+                resetGiveaway();
+                return;
+            }
 
             // Deadline: conservative PRE-SEND time. Sponsorship: independently
             // verified PUBLICATION time (never the earlier request timestamp).
