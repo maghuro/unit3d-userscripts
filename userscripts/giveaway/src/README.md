@@ -44,7 +44,9 @@ An opening has two independent boundaries: `openedAt` is captured **before**
 the public opening message is sent (and determines the maximum 45-minute
 deadline), while `sponsorStartTs` is derived from the server-confirmed
 announcement timestamp, conservatively beyond its timestamp resolution
-bucket. A pre-send `openingCheckpoint` is durably stored before posting.
+bucket. A valid Main Chat message cursor is mandatory before any LIVE opening;
+without one, abort without posting. A pre-send `openingCheckpoint`
+is durably stored before posting.
 If delivery is ambiguous, preserve it and retry verification on reload;
 do not silently discard the snapshot or perform settlement.
 
@@ -53,10 +55,12 @@ opening checkpoints older than the normal settlement grace require manual
 review rather than automatic BON transfers. Do not unify the two timestamps
 or disable the fail-closed verification gates when changing the lifecycle.
 
-For command output, Silent Mode routes host and staff responses to private
-messages, including winner/pot adjustment announcements and manual
-`!reminder`. Scheduled reminders remain visible in Main Chat. Rehearsal
-Mode keeps script output private to the host and BON transfers simulated.
+Silent Mode routes normal host and staff command replies privately,
+including winner/pot adjustment messages. **`!reminder` is an explicit
+broadcast request, not a private command reply:** both the manual reminder
+and the scheduled automatic reminder must appear in Main Chat even in
+Silent Mode. Rehearsal Mode redirects both to the host's private messages
+and keeps BON transfers simulated.
 
 ## Maintenance rule (source of truth)
 
