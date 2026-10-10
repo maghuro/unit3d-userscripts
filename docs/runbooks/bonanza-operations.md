@@ -4,7 +4,7 @@ This is the operational reference for hosting, rehearsing and recovering a DarkP
 
 ## If the pot or sponsor accounting looks wrong
 
-1. Extend the giveaway time if entries are still open.
+1. Extend the giveaway time if entries are still open, without exceeding 45 minutes in total from public opening.
 2. Do not settle while the accounting warning is visible.
 3. Do not manually resend winner gifts or BON Pool contributions unless the persisted settlement state explicitly says they were never attempted.
 4. Reload Main Chat. The userscript restores the giveaway and reconciles sponsor accounting against persistent DarkPeers Gift History.
@@ -25,6 +25,8 @@ DarkPeers staff may use operational recovery controls:
 - rig / unrig
 - time add / remove
 - addtime / removetime
+
+The 45-minute maximum applies to the initial form duration, saved presets and every host/staff extension. An extension cannot push the deadline beyond 45 minutes after the original public opening, even after a reload.
 - naughty
 
 Every non-host staff action is identified publicly in the command output with the staff username.
