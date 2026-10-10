@@ -687,11 +687,10 @@
               `✨[b][color=#FB4F4F]Gift the host to add to the pot! [color=${GIFT_HINT_COLOR}]/gift ${getGiftSyntaxHostName()} AMOUNT MESSAGE[/color][/color][/b]✨` +
               silentLine +
               rigLine;
-        // Automatic interval reminders remain public so entrants can see them.
-        // A manual !reminder is command output: honor Silent Mode there.
-        if (options.commandAuthor) {
-            return sendCommandResponse(options.commandAuthor, msg);
-        }
+        // Both scheduled reminders and explicit !reminder requests are
+        // announcements to ALL entrants, not replies to the host command.
+        // Silent Mode must not make the requested reminder invisible.
+        // Rehearsal Mode still redirects sendMessage() to the host's PM.
         return sendMessage(msg);
     }
 
