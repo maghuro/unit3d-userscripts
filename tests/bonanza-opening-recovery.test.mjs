@@ -746,3 +746,63 @@ test("empty but present recovery key is occupied and blocks a new opening", () =
   assert.match(start, /if \(prior\.hasStoredState\)/);
   assert.match(start, /if \(!savedAfterLock\.readOk \|\| savedAfterLock\.hasStoredState/);
 });
+
+test("empty legacy key is occupied, unreadable and never treated as vacant", () => {
+  const empty = recoveryReadHarness({ legacy: "" }).read("maghuro", { migrateLegacy: false });
+  assert.equal(empty.readOk, false, "Corrupt present legacy key cannot permit a new start");
+  assert.equal(empty.raw, null);
+  const afterLock = recoveryReadHarness({ legacy: "" }).read("maghuro", { migrateLegacy: true });
+  assert.equal(afterLock.readOk, false);
+  assert.equal(afterLock.raw, null);
+});
+
+test("initial legacy discovery is strictly read-only; migration waits for lock", () => {
+  const raw = JSON.stringify({ giveawayData: { host: "maghuro" } });
+  const h = recoveryReadHarness({ legacy: raw });
+  const before = h.read("maghuro", { migrateLegacy: false });
+  assert.equal(before.readOk, true);
+  assert.equal(before.hasStoredState, true);
+  assert.equal(before.raw, raw);
+  assert.deepEqual(h.events, []);
+  const after = h.read("maghuro", { migrateLegacy: true });
+  assert.equal(after.readOk, true);
+  assert.equal(after.migratedLegacy, true);
+  assert.deepEqual(h.events, ["write:recovery::maghuro"]);
+  const loadStart = initialization.indexOf("function loadGiveawaySnapshot()");
+  const loadEnd = initialization.indexOf("function clearSponsorAccountingRecoveryTimer()", loadStart);
+  const loader = initialization.slice(loadStart, loadEnd);
+  assert.match(loader, /migrateLegacy: false/);
+  assert.doesNotMatch(loader, /migrateLegacy: true/);
+});
+
+test("restore discards pre-lock object and freshly validates durable state under exclusive ownership", () => {
+  const start = initialization.indexOf("async function restoreGiveawayFromSnapshot(");
+  const acquire = initialization.indexOf("if (!await acquireTabLock())", start);
+  const read = initialization.indexOf("const lockedRead = readActiveGiveawayRawForHost(", acquire);
+  const validateRead = initialization.indexOf("!lockedRead.readOk", read);
+  const fresh = initialization.indexOf("const lockedSnapshot = loadGiveawaySnapshot()", read);
+  const freshness = initialization.indexOf("snap = lockedSnapshot;", fresh);
+  const verified = initialization.indexOf("const restoredCheckpoint = snap.giveawayData?.openingCheckpoint", freshness);
+  const hydrate = initialization.indexOf("// 1) Restore giveaway data", verified);
+  assert.ok(start >= 0 && acquire > start && read > acquire);
+  assert.ok(validateRead > read && fresh > validateRead && freshness > fresh);
+  assert.ok(verified > freshness && hydrate > verified);
+  const guard = initialization.slice(read, freshness);
+  assert.match(guard, /migrateLegacy: true/);
+  assert.match(guard, /!lockedRead.hasStoredState/);
+  assert.match(guard, /!ownsTabLock\(\)/);
+  assert.match(guard, /releaseTabLock\(\)/);
+  assert.match(guard, /lockedSnapshot.__legacyOpeningUnverified === true/);
+});
+
+test("fresh restore rejects deleted or corrupted recovery even when caller holds old snapshot", () => {
+  const begin = initialization.indexOf("const lockedRead = readActiveGiveawayRawForHost(");
+  const end = initialization.indexOf("snap = lockedSnapshot;", begin);
+  const body = initialization.slice(begin, end);
+  assert.match(body, /!lockedRead.readOk/);
+  assert.match(body, /!lockedRead.hasStoredState/);
+  assert.match(body, /!lockedRead.raw/);
+  assert.match(body, /!lockedSnapshot/);
+  assert.match(body, /normalizeUserKey\(lockedSnapshot.giveawayData.host\)/);
+  assert.match(body, /lockedSnapshot.giveawayData.rehearsalMode === true/);
+});
