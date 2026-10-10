@@ -114,7 +114,9 @@
             type="number"
             inputmode="numeric"
             min="1"
+            max="45"
             step="1"
+            title="Maximum giveaway duration: 45 minutes"
             value="5"
             autocomplete="off"
           >
@@ -375,7 +377,7 @@
       <li class="section-label">Host or Staff Emergency Commands</li>
       <li class="full-span">
           <code>!time add&nbsp;N&nbsp;/&nbsp;remove&nbsp;N&nbsp;</code>
-          <span class="desc">Adjust remaining minutes</span>
+          <span class="desc">Adjust remaining minutes (45 min total maximum)</span>
       </li>
       <li><code>!rig/!unrig&nbsp;</code>  <span class="desc">Toggle rigging (visual only)</span></li>
       <li><code>!end&nbsp;[host]</code>   <span class="desc">Host: !end. Staff: !end &lt;host&gt;</span></li>
