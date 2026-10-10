@@ -74,6 +74,17 @@ multiple userscripts, not just BONanza.
   Omit ambiguous boundary gifts rather than risking inflation of a real
   BON payout. Persist `sponsorStartTs` and
   use it for both live Gift History polling and reload reconciliation.
+- After acquiring the exclusive Web Lock, read saved recovery storage AGAIN
+  before mutating state or posting. Another tab may have saved an uncertain
+  opening while waiting for the lock; do not overwrite any such state.
+- Reverify every locally **confirmed** LIVE opening during restore against
+  the exact original Main Chat message ID, authenticated author, full
+  announcement text, bounded send window and sponsor boundary. If that
+  authoritative evidence is unavailable, preserve the snapshot without
+  enabling entries or BON transfers.
+- With no calibrated Gift History offset, neither UTC nor browser-local
+  timestamps are trustworthy: defer ALL gifts as retryable and block
+  final canonical settlement until calibration succeeds.
 - Leave unresolved opening checkpoints intact for later recovery; never
   overwrite them with a new giveaway or auto-settle a recovered ancient
   opening beyond the one-hour expiry grace. **Pre-checkpoint legacy snapshots
