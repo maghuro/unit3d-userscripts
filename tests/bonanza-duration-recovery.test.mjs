@@ -19,6 +19,9 @@ function extractNamedFunction(source, name) {
 // Run the real recovery predicate, not a reimplementation of the logic.
 const functions = [
   extractNamedFunction(utilities, "getGiveawayMaxEndTs"),
+  extractNamedFunction(utilities, "getReminderLimits"),
+  extractNamedFunction(utilities, "getReminderSchedule"),
+  extractNamedFunction(utilities, "nextReminderMs"),
   extractNamedFunction(initialization, "loadGiveawaySnapshot")
 ].join("\n");
 
@@ -28,6 +31,7 @@ const NOW = 1_800_000_000_000;
 function recoveryHarness({
   ageMinutes,
   advertisedMinutes = 90,
+  reminderCount = 1,
   settlement = null,
   closingIntent = false,
   closingNoticeSent = false
@@ -42,6 +46,11 @@ function recoveryHarness({
       host: "maghuro",
       rehearsalMode: false,
       endTs: originalEnd,
+      reminderNum: reminderCount,
+      reminderSchedule: [Math.round(advertisedMinutes / (reminderCount + 1) * MINUTE)],
+      reminderFreqSec: advertisedMinutes * 60 / (reminderCount + 1),
+      nextReminderSec: advertisedMinutes * 60 / (reminderCount + 1),
+      totalSeconds: advertisedMinutes * 60,
       settlement,
       closingIntent,
       closingNoticeSent
@@ -50,6 +59,7 @@ function recoveryHarness({
   const context = vm.createContext({
     Date: { now: () => NOW },
     MAX_GIVEAWAY_MINUTES: 45,
+    MAX_REMINDERS: 6,
     EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS: 60 * MINUTE,
     REHEARSAL_MODE: false,
     normalizeUserKey: (value) => String(value || "").toLowerCase(),
@@ -61,6 +71,7 @@ function recoveryHarness({
   vm.runInContext(functions, context);
   return {
     restore: () => context.loadGiveawaySnapshot(),
+    nextReminderMs: (schedule, msLeft) => context.nextReminderMs(schedule, msLeft),
     clears, warnings, originalEnd, cappedEnd: openedAt + 45 * MINUTE
   };
 }
@@ -124,4 +135,67 @@ test("latched in-progress settlement is retained after the normal grace", () => 
   assert.equal(result.giveawayData.endTs, h.cappedEnd);
   assert.equal(result.__expiredAtLoad, true);
   assert.equal(h.clears.length, 0);
+});
+
+test("capped active legacy giveaway rebuilds a single reminder at the new midpoint", () => {
+  const h = recoveryHarness({ ageMinutes: 5, advertisedMinutes: 90, reminderCount: 1 });
+  const result = h.restore();
+  assert.ok(result);
+  assert.equal(result.giveawayData.endTs, h.cappedEnd);
+  assert.deepEqual(Array.from(result.giveawayData.reminderSchedule), [22.5 * MINUTE]);
+  assert.equal(result.giveawayData.reminderNum, 1);
+  assert.equal(result.giveawayData.totalSeconds, 45 * 60);
+  assert.equal(result.giveawayData.reminderFreqSec, 22.5 * 60);
+  assert.equal(result.giveawayData.nextReminderSec, 22.5 * 60);
+  assert.equal(h.nextReminderMs(result.giveawayData.reminderSchedule, 40 * MINUTE), 17.5 * MINUTE);
+});
+
+test("capped restore drops already-passed reminder thresholds instead of replaying them", () => {
+  const h = recoveryHarness({ ageMinutes: 30, advertisedMinutes: 90, reminderCount: 1 });
+  const result = h.restore();
+  assert.ok(result);
+  assert.equal(result.__expiredAtLoad, false);
+  assert.equal(h.nextReminderMs(result.giveawayData.reminderSchedule, 15 * MINUTE), null);
+  assert.equal(result.giveawayData.reminderSchedule.length, 0);
+});
+
+test("capped restore preserves multiple reminder count and recalculates the actual offsets", () => {
+  const h = recoveryHarness({ ageMinutes: 5, advertisedMinutes: 90, reminderCount: 3 });
+  const result = h.restore();
+  assert.ok(result);
+  assert.deepEqual(Array.from(result.giveawayData.reminderSchedule), [
+    Math.round(33.75 * MINUTE),
+    Math.round(22.5 * MINUTE),
+    Math.round(11.25 * MINUTE)
+  ]);
+  assert.equal(result.giveawayData.reminderNum, 3);
+  assert.equal(result.giveawayData.reminderFreqSec, 11.25 * 60);
+});
+
+test("capped restore clamps a legacy excessive reminder count to the safe configured maximum", () => {
+  const h = recoveryHarness({ ageMinutes: 5, reminderCount: 99 });
+  const result = h.restore();
+  assert.ok(result);
+  assert.equal(result.giveawayData.reminderNum, 6);
+  assert.equal(result.giveawayData.reminderSchedule.length, 6);
+});
+
+test("already compliant snapshots are not rescheduled on restore", () => {
+  const h = recoveryHarness({ ageMinutes: 5, advertisedMinutes: 30, reminderCount: 1 });
+  const result = h.restore();
+  assert.ok(result);
+  assert.equal(result.giveawayData.endTs, h.originalEnd);
+  assert.deepEqual(Array.from(result.giveawayData.reminderSchedule), [15 * MINUTE]);
+  assert.equal(result.giveawayData.totalSeconds, 30 * 60);
+});
+
+test("committed settlement retains original reminders and deadline intact", () => {
+  const h = recoveryHarness({
+    ageMinutes: 150, advertisedMinutes: 90,
+    reminderCount: 1, settlement: { committed: true }
+  });
+  const result = h.restore();
+  assert.ok(result);
+  assert.equal(result.giveawayData.endTs, h.originalEnd);
+  assert.deepEqual(Array.from(result.giveawayData.reminderSchedule), [45 * MINUTE]);
 });
