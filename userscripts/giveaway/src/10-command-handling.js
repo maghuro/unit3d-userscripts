@@ -748,7 +748,7 @@
             if (normalizeUserKey(ctx.author) === normalizeUserKey(ctx.giveawayData.host)) {
                 // An explicit host !reminder is a manual override: send it now
                 // instead of applying the automatic recent-reminder suppression.
-                sendReminder({ force: true, commandAuthor: ctx.author });
+                sendReminder({ force: true });
             }
         },
 
