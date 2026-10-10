@@ -269,6 +269,10 @@
 //     for manual recovery (no automatic 45-minute rewrite or BON payout).
 //     Coarse Gift History calibration uncertainty is tracked, saved across
 //     reloads, and subtracted before sponsor-start eligibility checks.
+//     Recovery storage read failures block new giveaways even when raw data
+//     appears absent. Preflight before the persisted opening checkpoint is
+//     NEVER snapshotted, including on BFCache/pagehide. Corrupt recovery
+//     snapshots are preserved rather than silently deleted.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
@@ -2912,11 +2916,11 @@ body.host-panel-dragging * {
     function readActiveGiveawayRawForHost(hostName = "", { migrateLegacy = false } = {}) {
         const requestedHostKey = normalizeUserKey(hostName || getLoggedInUsername());
         const storageKey = getActiveGiveawayStorageKey(requestedHostKey);
-        if (!requestedHostKey || !storageKey) return { storageKey, raw: null, migratedLegacy: false };
+        if (!requestedHostKey || !storageKey) return { storageKey, raw: null, migratedLegacy: false, readOk: false };
 
         try {
             const namespacedRaw = localStorage.getItem(storageKey);
-            if (namespacedRaw) return { storageKey, raw: namespacedRaw, migratedLegacy: false };
+            if (namespacedRaw) return { storageKey, raw: namespacedRaw, migratedLegacy: false, readOk: true };
 
             // Backwards-compatible migration from pre-v1.3.24 hostname-wide storage.
             // A legacy snapshot belonging to another account is deliberately left
@@ -2924,24 +2928,28 @@ body.host-panel-dragging * {
             // overwrite that foreign recovery state. Rehearsal storage never
             // imports a live legacy snapshot.
             if (REHEARSAL_MODE) {
-                return { storageKey, raw: null, migratedLegacy: false };
+                return { storageKey, raw: null, migratedLegacy: false, readOk: true };
             }
             const legacyRaw = localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY);
-            if (!legacyRaw) return { storageKey, raw: null, migratedLegacy: false };
+            if (!legacyRaw) return { storageKey, raw: null, migratedLegacy: false, readOk: true };
 
             const legacy = JSON.parse(legacyRaw);
             const legacyHostKey = normalizeUserKey(legacy?.giveawayData?.host);
             if (!legacyHostKey || legacyHostKey !== requestedHostKey) {
-                return { storageKey, raw: null, migratedLegacy: false };
+                return { storageKey, raw: null, migratedLegacy: false, readOk: true };
             }
 
             if (migrateLegacy) {
                 localStorage.setItem(storageKey, legacyRaw);
                 localStorage.removeItem(LS_ACTIVE_GIVEAWAY_LEGACY);
             }
-            return { storageKey, raw: legacyRaw, migratedLegacy: !!migrateLegacy };
-        } catch {
-            return { storageKey, raw: null, migratedLegacy: false };
+            return { storageKey, raw: legacyRaw, migratedLegacy: !!migrateLegacy, readOk: true };
+        } catch (error) {
+            // A failed localStorage read (including corrupt legacy JSON) is
+            // NOT proof that the active recovery slot is empty. A new giveaway
+            // must not overwrite existing state when read integrity is unknown.
+            console.warn("[BON Giveaway] Active recovery storage read failed:", error);
+            return { storageKey, raw: null, migratedLegacy: false, readOk: false };
         }
     }
 
@@ -3165,7 +3173,13 @@ body.host-panel-dragging * {
      * Called at key mutation points (new entry, start, addbon, sponsor, time adjust).
      */
     function snapshotGiveaway({ force = false, verifyWrite = false } = {}) {
-        if (!giveawayData || !canMutateActiveGiveaway() || (giveawayData.__ending && !force)) return false;
+        // Preflight state exists only in memory while balance, Gift History and
+        // chat cursor checks run. Never persist it as a legacy giveaway when
+        // pagehide/unload fires BEFORE the opening checkpoint is saved.
+        const proof = giveawayData?.openingCheckpoint;
+        if (!giveawayData ||
+            !proof || (proof.status !== "pending" && proof.status !== "confirmed") ||
+            !canMutateActiveGiveaway() || (giveawayData.__ending && !force)) return false;
         try {
             const snapshot = {
                 giveawayData: {
@@ -3303,6 +3317,10 @@ body.host-panel-dragging * {
             if (!loggedInHostKey) return null;
 
             const stored = readActiveGiveawayRawForHost(loggedInHostKey, { migrateLegacy: true });
+            if (!stored.readOk) {
+                console.warn("[BON Giveaway] Recovery storage unreadable; leaving any existing state untouched.");
+                return null;
+            }
             if (!stored.raw) return null;
             const snap = JSON.parse(stored.raw);
             if (!snap || !snap.giveawayData) return null;
@@ -3349,7 +3367,10 @@ body.host-panel-dragging * {
 
             const endTs = Number(snap.giveawayData.endTs);
             if (!Number.isFinite(endTs) || endTs <= 0) {
-                clearGiveawaySnapshot();
+                // Invalid saved data can reflect an incomplete write or an
+                // in-progress payout. Preserve it for manual inspection;
+                // never erase potentially recoverable settlement evidence.
+                console.warn("[BON Giveaway] Invalid saved deadline; snapshot preserved for manual recovery.");
                 return null;
             }
 
@@ -3409,8 +3430,11 @@ body.host-panel-dragging * {
             // active-giveaway grace window.
             snap.__expiredAtLoad = overdueMs >= 0 || closingSettlementLatched;
             return snap;
-        } catch {
-            clearGiveawaySnapshot();
+        } catch (error) {
+            // Malformed or temporarily unreadable snapshots must not be
+            // silently discarded; a subsequent clean read or manual analysis
+            // may be needed to prevent lost or duplicate BON payouts.
+            console.warn("[BON Giveaway] Unable to parse recovery snapshot; retaining stored data:", error);
             return null;
         }
     }
@@ -4202,6 +4226,11 @@ body.host-panel-dragging * {
         const prior = readActiveGiveawayRawForHost(getLoggedInUsername(), {
             migrateLegacy: true
         });
+        // localStorage failures must block starts, never look like absence.
+        if (!prior.readOk || !prior.storageKey) {
+            window.alert("GIVEAWAY START BLOCKED: Cannot read recovery storage reliably. No opening was posted.");
+            return;
+        }
         if (prior.raw) {
             try {
                 const saved = JSON.parse(prior.raw);
@@ -4267,7 +4296,7 @@ body.host-panel-dragging * {
         const savedAfterLock = readActiveGiveawayRawForHost(getLoggedInUsername(), {
             migrateLegacy: true
         });
-        if (savedAfterLock.raw || !savedAfterLock.storageKey) {
+        if (!savedAfterLock.readOk || savedAfterLock.raw || !savedAfterLock.storageKey) {
             logEvent("Start blocked (post-lock recovery recheck)",
                 "Saved giveaway state appeared while awaiting the exclusive lock; no new opening was posted.");
             window.alert(
@@ -4393,6 +4422,9 @@ body.host-panel-dragging * {
 
         updateRigToggleUI();
         const currentBon = await getVerifiedHostBalance({ requireServer: true, maxAgeMs: 0 });
+        // A pagehide while preflight was awaiting balance invalidates this
+        // document. Don't continue into the public opening workflow.
+        if (!ownsTabLock()) return;
 
         if (currentBon == null) {
             const startErr = "Unable to verify current BON balance.";
@@ -4479,6 +4511,7 @@ body.host-panel-dragging * {
                 giveawayData
             });
             const sponsorBaselineReady = await tracker.bootstrapGiftHistory();
+            if (!ownsTabLock()) return;
             if (!sponsorBaselineReady) {
                 logEvent(
                     "Start aborted (Gift History baseline)",
