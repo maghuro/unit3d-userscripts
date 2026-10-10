@@ -300,7 +300,7 @@
             }
 
             const action = (args[0] || "").toLowerCase(); // "add" / "remove"
-            const minutes = parseFloat(args[1]);
+            const minutes = Number(args[1]);
             const isPriv = normalizeUserKey(author) === normalizeUserKey(giveawayData.host) || isAdmin(fancyName);
 
             if (!isPriv) return; // silently ignore non-host/non-admin
@@ -1175,16 +1175,28 @@
             if (!isHostOrAdmin(author, fancyName, giveawayData.host)) return;
             const actionReply = makeStaffAttributedReply(ctx);
 
-            const mins = parseFloat(args[0]);
-            if (isNaN(mins) || mins <= 0) {
+            const mins = Number(args[0]);
+            if (!Number.isFinite(mins) || mins <= 0) {
                 actionReply(
                     "[color=red]Usage:[/color] !time add|remove <minutes> or !addtime|!removetime <minutes>"
                 );
                 return;
             }
 
-            const deltaMs = sign * mins * 60_000;
-            giveawayData.endTs += deltaMs; // move the deadline
+            // Limit the TOTAL duration since the public opening, not merely the
+            // remaining countdown. Host and staff use this same enforcement path.
+            const maxEndTs = getGiveawayMaxEndTs(giveawayData.openedAt);
+            const oldEndTs = Number(giveawayData.endTs);
+            const nextEndTs = oldEndTs + sign * mins * 60_000;
+            if (maxEndTs === null || !Number.isFinite(oldEndTs) || !Number.isFinite(nextEndTs)) {
+                actionReply("[color=red]Time change refused:[/color] a trustworthy giveaway opening time is unavailable.");
+                return;
+            }
+            if (nextEndTs > maxEndTs) {
+                actionReply(`[color=red]Time change refused:[/color] DarkPeers allows a maximum of ${MAX_GIVEAWAY_MINUTES} minutes from the original opening.`);
+                return;
+            }
+            giveawayData.endTs = nextEndTs;
 
             rebuildSchedule(); // rebuild reminder schedule
 
