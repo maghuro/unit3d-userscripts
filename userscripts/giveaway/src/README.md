@@ -62,6 +62,8 @@ Recheck the saved state **after** acquiring the exclusive Web Lock; two
 tabs may have seen empty storage before one posts an uncertain opening.
 Treat `readOk: false` as a hard stop: storage-read errors, malformed
 legacy JSON and migration failures are NEVER equivalent to empty storage.
+Even an empty string in an existing recovery slot is occupied, not vacant.
+Pre-lock checks only READ; any legacy-key migration happens after locking.
 Snapshots are forbidden during balance/history/cursor preflight, before a
 persisted opening checkpoint exists, including pagehide/BFCache/unload.
 Keep malformed or unreadable recovery records intact for manual review
