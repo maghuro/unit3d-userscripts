@@ -10,6 +10,15 @@
             return;
         }
 
+        // Validate in code, not just through the HTML max attribute: DevTools,
+        // presets or scripted property changes cannot start a longer giveaway.
+        const totalTimeMin = parseGiveawayMinutes(timerInput?.value);
+        if (totalTimeMin === null) {
+            window.alert(`DarkPeers giveaways must last between 1 and ${MAX_GIVEAWAY_MINUTES} whole minutes.`);
+            timerInput?.focus();
+            return;
+        }
+
         if (!giveawayForm.checkValidity()) {
             giveawayForm.reportValidity();
             return;
@@ -103,8 +112,7 @@
         //startButton.parentElement.hidden = true;
         entriesWrapper.hidden = false;
 
-        let totalTimeMin = totalMinutes();
-        let totalTimeMs = totalTimeMin * 60000;
+        const totalTimeMs = totalTimeMin * 60000;
         let reminderNum = Math.min(Number(remNumInput.value), getReminderLimits(totalTimeMin)[0]);
         if (isNaN(reminderNum) || reminderNum < 0) reminderNum = 0;
         const schedule = getReminderSchedule(totalTimeMin, reminderNum);
@@ -137,6 +145,7 @@
             totalEntries: parseInt(endInput.value, 10) - parseInt(startInput.value, 10) + 1,
             winningNumber: null,
             totalSeconds: totalTimeMs / 1000,
+            openedAt: null,
             timeLeft: totalTimeMs / 1000,
             endTs: Date.now() + (totalTimeMs),
             winnersNum,
@@ -280,6 +289,7 @@
             // Public opening is the temporal boundary. The pre-opening Gift History
             // snapshot means every subsequently appearing received gift is new.
             giveawayStartTime = new Date();
+            giveawayData.openedAt = giveawayStartTime.getTime();
             tracker.giveawayStartTs = giveawayStartTime.getTime();
             // The advertised duration begins at the same public-opening boundary,
             // not while balance/history preflight or chat delivery is still running.
