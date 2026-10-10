@@ -60,6 +60,12 @@ silently discard the snapshot or perform settlement.
 
 Recheck the saved state **after** acquiring the exclusive Web Lock; two
 tabs may have seen empty storage before one posts an uncertain opening.
+Treat `readOk: false` as a hard stop: storage-read errors, malformed
+legacy JSON and migration failures are NEVER equivalent to empty storage.
+Snapshots are forbidden during balance/history/cursor preflight, before a
+persisted opening checkpoint exists, including pagehide/BFCache/unload.
+Keep malformed or unreadable recovery records intact for manual review
+instead of deleting possible BON settlement evidence.
 Reverify previously confirmed LIVE openings from authoritative Main Chat
 on every restore, requiring the same original message ID, host, exact
 text, send window and sponsor boundary. If absent or inconsistent, leave
