@@ -1094,7 +1094,9 @@
                 return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
             }
             const legacyRaw = localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY);
-            if (!legacyRaw) return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
+            // null means absent; even "" is an occupied/corrupt recovery slot.
+            // Never use truthiness when deciding whether BON recovery exists.
+            if (legacyRaw === null) return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
 
             const legacy = JSON.parse(legacyRaw);
             const legacyHostKey = normalizeUserKey(legacy?.giveawayData?.host);
@@ -1482,7 +1484,9 @@
             const loggedInHostKey = normalizeUserKey(getLoggedInUsername());
             if (!loggedInHostKey) return null;
 
-            const stored = readActiveGiveawayRawForHost(loggedInHostKey, { migrateLegacy: true });
+            // UI bootstrap runs BEFORE Web Lock acquisition: never migrate or
+            // remove legacy keys here. Only the post-lock restore read may do so.
+            const stored = readActiveGiveawayRawForHost(loggedInHostKey, { migrateLegacy: false });
             if (!stored.readOk) {
                 console.warn("[BON Giveaway] Recovery storage unreadable; leaving any existing state untouched.");
                 return null;
@@ -1768,6 +1772,34 @@
         }
 
         try {
+            // The caller's snap was read before awaiting the Web Lock.
+            // Another tab may have committed/persisted payout state while we
+            // were queued, then released its lock. Never restore that stale
+            // object and overwrite newer payout/checkpoint information.
+            // Refresh storage and re-apply all current restore validation
+            // WHILE holding exclusive ownership.
+            const lockedRead = readActiveGiveawayRawForHost(restoreHost, {
+                migrateLegacy: true
+            });
+            if (!ownsTabLock() || !lockedRead.readOk ||
+                !lockedRead.hasStoredState || !lockedRead.raw) {
+                console.warn("[BON Giveaway] Restore blocked: recovery storage changed or could not be read under lock.");
+                releaseTabLock();
+                return false;
+            }
+            const lockedSnapshot = loadGiveawaySnapshot();
+            if (!ownsTabLock() || !lockedSnapshot ||
+                lockedSnapshot.__legacyOpeningUnverified === true ||
+                !lockedSnapshot.giveawayData ||
+                normalizeUserKey(lockedSnapshot.giveawayData.host) !==
+                    normalizeUserKey(restoreHost) ||
+                (lockedSnapshot.giveawayData.rehearsalMode === true) !== REHEARSAL_MODE) {
+                console.warn("[BON Giveaway] Restore blocked: locked snapshot is absent, unverified or belongs to another mode/host.");
+                releaseTabLock();
+                return false;
+            }
+            snap = lockedSnapshot;
+
             // Local storage alone is not authoritative evidence of a public
             // opening. For a previously confirmed LIVE giveaway, prove that
             // the exact original message ID/host/text/timestamp still exists
