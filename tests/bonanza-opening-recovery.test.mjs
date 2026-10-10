@@ -33,6 +33,7 @@ function createHarness({ records = [], responses = null, owned = () => true } = 
     status: "pending",
     startedAt: START,
     afterMessageId: 100,
+    windowEndAt: START + 10_000,
     preparedMessage
   };
   const runtime = vm.createContext({
@@ -40,6 +41,7 @@ function createHarness({ records = [], responses = null, owned = () => true } = 
     location: { origin: "https://darkpeers.org" },
     OT_USER_ID: 17,
     DARKPEERS_MAIN_CHATROOM_ID: 1,
+    OPENING_POST_MAX_PUBLICATION_WINDOW_MS: 10_000,
     ownsTabLock: owned,
     optionalFiniteNumber: value => value == null ? null : Number(value),
     unit3dTimestampResolutionMs: raw => String(raw).includes(".") ? 1 : 1000,
@@ -81,12 +83,63 @@ test("opening reconciliation requires authenticated author, exact announcement a
   assert.match(h.calls[0], /after_id=100/);
 });
 
-test("verified sponsorship starts AFTER the publication timestamp bucket", async () => {
+test("a timestamp bucket overlapping the pre-send boundary stays unresolved", async () => {
+  // Same-second history can represent a message posted before this attempt.
   const h = createHarness({ records: [goodMessage({ created_at: sameSecond })] });
+  assert.equal(await h.run(), null);
+  assert.equal(h.calls.length, 3);
+});
+
+test("verified sponsorship starts strictly AFTER a fully proven publication bucket", async () => {
+  const h = createHarness({ records: [goodMessage()] });
   const result = await h.run();
   assert.ok(result);
-  assert.equal(result.sponsorStartTs, START + 500);
-  assert.ok(result.sponsorStartTs >= START);
+  assert.equal(result.sponsorStartTs, START + 1500);
+  assert.ok(result.sponsorStartTs > START);
+});
+
+test("a later identical host message cannot confirm an old opening", async () => {
+  // Cursor and identity alone are insufficient: the same announcement can
+  // be posted later by the host while the original send was never published.
+  const later = new Date(START + 15_000).toISOString();
+  const h = createHarness({ records: [goodMessage({ created_at: later, id: 102 })] });
+  assert.equal(await h.run(), null);
+});
+
+test("opening publication buckets crossing the upper send window are rejected", async () => {
+  const upperBucket = new Date(START + 9_500).toISOString()
+    .replace(".000Z", "Z");
+  const h = createHarness({ records: [
+    goodMessage({ created_at: upperBucket })
+  ] });
+  // 11:00:10.000 .. 11:00:11.000 overlaps 11:00:10.500 bound.
+  assert.equal(await h.run(), null);
+});
+
+test("a timestamp bucket fully inside the persisted opening window is accepted", async () => {
+  const h = createHarness({ records: [
+    goodMessage({ created_at: new Date(START + 9900).toISOString() })
+  ] });
+  const result = await h.run();
+  assert.ok(result);
+  assert.equal(result.sponsorStartTs, START + 9901);
+});
+
+test("response completion narrows the publication window for confirmed and failed sends", async () => {
+  const accepted = createHarness({ records: [goodMessage()] });
+  accepted.checks.sendCompletedAt = START + 1700;
+  assert.ok(await accepted.run());
+
+  const rejected = createHarness({ records: [goodMessage()] });
+  rejected.checks.sendCompletedAt = START + 1200;
+  assert.equal(await rejected.run(), null);
+});
+
+test("an invalid persisted upper boundary never widens recovery into later history", async () => {
+  const h = createHarness({ records: [goodMessage()] });
+  h.checks.windowEndAt = START - 1;
+  assert.equal(await h.run(), null);
+  assert.equal(h.calls.length, 0);
 });
 
 test("ambiguous opening does not accept someone else's message or mismatched text", async () => {
@@ -320,4 +373,27 @@ test("a confirmed opening enables sponsor accounting only after canonical reconc
   assert.ok(deferred > confirmed, "On failure recovery remains retryable");
   assert.match(code, /if \(giveawayData\.__sponsorAccountingVerified === true\)/);
   assert.match(code, /scheduleSponsorAccountingRecovery\(tracker\)/);
+});
+
+test("the bounded send window is persisted before POST and completion before verification", () => {
+  const beginning = lifecycle.indexOf("const openingSendStartedAt = Date.now();");
+  const storeHardEnd = lifecycle.indexOf(
+    "windowEndAt: openingSendStartedAt + OPENING_POST_MAX_PUBLICATION_WINDOW_MS", beginning
+  );
+  const firstPersistence = lifecycle.indexOf(
+    "snapshotGiveaway({ force: true, verifyWrite: true })", storeHardEnd
+  );
+  const posted = lifecycle.indexOf("const introSent = await sendMessage(", firstPersistence);
+  const finished = lifecycle.indexOf(
+    "giveawayData.openingCheckpoint.sendCompletedAt = Date.now();", posted
+  );
+  const persistedCompletion = lifecycle.indexOf(
+    "snapshotGiveaway({ force: true, verifyWrite: true })", finished
+  );
+  const verified = lifecycle.indexOf("await verifyPendingGiveawayOpening(", posted);
+  assert.ok(beginning >= 0 && storeHardEnd > beginning);
+  assert.ok(firstPersistence > storeHardEnd && posted > firstPersistence);
+  assert.ok(finished > posted && persistedCompletion > finished && verified > persistedCompletion);
+  assert.match(lifecycle, /timestamp < startedAt/);
+  assert.match(lifecycle, /\(timestamp \+ resolutionMs\) > windowEnd/);
 });
