@@ -3308,6 +3308,8 @@ body.host-panel-dragging * {
                 snap.giveawayData.endTs = maxEndTs;
                 console.warn("[BON Giveaway] Recovered deadline capped at 45 minutes after public opening.");
             }
+            // Apply the normal one-hour restore grace to the *capped* deadline.
+            // Otherwise ancient giveaways could unexpectedly resume settlement.
             const overdueMs = Date.now() - Number(snap.giveawayData.endTs);
             const closingSettlementLatched =
                 snap.giveawayData?.closingIntent === true ||
@@ -3317,8 +3319,7 @@ body.host-panel-dragging * {
             if (
                 overdueMs > EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS &&
                 !committedSettlement &&
-                !closingSettlementLatched &&
-                !correctedDeadline
+                !closingSettlementLatched
             ) {
                 console.warn("[BON Giveaway] Discarding stale expired active snapshot; automatic settlement grace exceeded.");
                 clearGiveawaySnapshot();
