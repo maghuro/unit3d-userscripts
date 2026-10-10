@@ -55,13 +55,23 @@ timestamp-resolution bucket** inside the original bounded POST attempt:
 overlapping same-second buckets and later identical posts remain ambiguous.
 If delivery is ambiguous, preserve it and retry verification on reload;
 even a non-OK opening POST response must NOT trigger a second chatbox
-opening, since the server may have stored the original message.
-do not silently discard the snapshot or perform settlement.
+opening, since the server may have stored the original message. Do not
+silently discard the snapshot or perform settlement.
 
-A new giveaway must not overwrite a pending opening checkpoint. Recovered
-opening checkpoints older than the normal settlement grace require manual
-review rather than automatic BON transfers. Do not unify the two timestamps
-or disable the fail-closed verification gates when changing the lifecycle.
+A new giveaway must not overwrite a pending or legacy unverified snapshot.
+Recovered opening checkpoints older than the normal settlement grace require
+manual review rather than automatic BON transfers. Pre-checkpoint legacy
+snapshots have neither verified public-opening evidence nor a conservative
+pre-send timestamp: retain the ORIGINAL record for manual investigation,
+without automatically capping a deadline from the later post-send timestamp,
+resuming entrants, or moving BON, even if settlement was already committed.
+
+Clock calibration against exact notification events can shift the apparent
+start of a second-precision Gift History bucket. Preserve the learned
+calibration uncertainty in the snapshot, and apply the conservative EARLIEST
+bucket start before checking the verified `sponsorStartTs`; this rule also
+applies when reconstructing boundary chat evidence. Never unify the two
+opening timestamps or bypass the fail-closed verification gates.
 
 Silent Mode routes normal host and staff command replies privately,
 including winner/pot adjustment messages. **`!reminder` is an explicit
