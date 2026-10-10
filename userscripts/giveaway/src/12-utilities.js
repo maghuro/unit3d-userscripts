@@ -2624,9 +2624,22 @@
     }
 
 
+    function parseGiveawayMinutes(value) {
+        const raw = String(value ?? "").trim();
+        if (!/^\d+$/.test(raw)) return null;
+        const minutes = Number(raw);
+        return Number.isSafeInteger(minutes) && minutes >= 1 && minutes <= MAX_GIVEAWAY_MINUTES
+            ? minutes : null;
+    }
+
+    function getGiveawayMaxEndTs(startTime) {
+        const startedAt = Number(startTime);
+        return Number.isFinite(startedAt) && startedAt > 0
+            ? startedAt + MAX_GIVEAWAY_MINUTES * 60_000 : null;
+    }
+
     function totalMinutes () {
-        const t = parseInt(String(timerInput?.value ?? ""), 10);
-        return (Number.isFinite(t) && t > 0) ? t : 0;
+        return parseGiveawayMinutes(timerInput?.value) ?? 0;
     }
 
     function nextReminderMs(schedule, msLeft) {
