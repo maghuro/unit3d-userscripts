@@ -276,3 +276,52 @@ test("both chat aliases use the public over-limit rejection path", () => {
   assert.match(commands, /source:\s*"chat"/);
   assert.match(commands, /if \(ctx\.source === "chat"\)/);
 });
+
+test("Rehearsal Mode delivers the same 45-minute warning privately, without a public chat send", async () => {
+  const openedAt = Date.now() - 5 * 60_000;
+  const data = { host: "maghuro", openedAt, endTs: openedAt + 40 * 60_000 };
+  const privateMessages = [];
+  let changed = 0;
+  const context = vm.createContext({
+    MAX_GIVEAWAY_MINUTES: 45,
+    REHEARSAL_MODE: true,
+    GENERAL_SETTINGS: { silent_mode: true },
+    DEBUG_SETTINGS: { disable_chat_output: false, verify_sendmessage: false, log_chat_messages: false },
+    giveawayData: data,
+    getLoggedInUsername: () => "maghuro",
+    sanitizeNick: name => name,
+    logEvent() {},
+    prepareOutgoingMessage: text => text,
+    formatRehearsalPrivateOutput: text => "[REHEARSAL] " + text,
+    sendPrivateMessage: (user, text) => {
+      privateMessages.push({ user, text });
+      return Promise.resolve(true);
+    },
+    isHostOrAdmin: (user, _, host) => user === host,
+    isNonHostStaffAction: () => false,
+    rebuildSchedule: () => { changed++; },
+    snapshotGiveaway: () => { changed++; }
+  });
+  vm.runInContext([
+    namedFunction(utilities, "getGiveawayMaxEndTs"),
+    namedFunction(utilities, "sendMessage"),
+    namedFunction(commands, "makeStaffAttributedReply"),
+    namedFunction(commands, "hostAdjustTime")
+  ].join("\n"), context);
+
+  // Command originates from chat, but rehearsal mode redirects outgoing
+  // script-generated chat output to the host's private inbox.
+  context.hostAdjustTime(+1)({
+    author: "maghuro", fancyName: "", giveawayData: data,
+    source: "chat", args: ["10"], reply: () => { throw Error("Unexpected normal reply"); }
+  });
+  await Promise.resolve();
+  assert.equal(data.endTs, openedAt + 40 * 60_000);
+  assert.equal(changed, 0);
+  assert.equal(privateMessages.length, 1);
+  assert.equal(privateMessages[0].user, "maghuro");
+  assert.match(privateMessages[0].text, /\[REHEARSAL\]/);
+  assert.match(privateMessages[0].text, /Time limit exceeded!/);
+  assert.match(privateMessages[0].text, /45 minutes total/);
+  assert.match(privateMessages[0].text, /No time was added/);
+});
