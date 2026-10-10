@@ -592,7 +592,7 @@ test("starting a new giveaway repeats recovery snapshot check inside the acquire
   const guard = lifecycle.slice(afterLock, firstMutation);
   assert.ok(start >= 0 && beforeLock > start && locked > beforeLock);
   assert.ok(afterLock > locked && firstMutation > afterLock);
-  assert.match(guard, /if \(!savedAfterLock\.readOk \|\| savedAfterLock\.raw \|\| !savedAfterLock\.storageKey\)/);
+  assert.match(guard, /if \(!savedAfterLock\.readOk \|\| savedAfterLock\.hasStoredState \|\| !savedAfterLock\.storageKey\)/);
   assert.match(guard, /releaseTabLock\(\)/);
   assert.match(guard, /return;/);
 });
@@ -703,7 +703,7 @@ test("only positively established empty recovery storage allows start prechecks"
     lifecycle.indexOf("if (sponsorsInterval)")
   );
   assert.match(start, /if \(!prior\.readOk \|\| !prior\.storageKey\)/);
-  assert.match(start, /if \(!savedAfterLock\.readOk \|\| savedAfterLock\.raw/);
+  assert.match(start, /if \(!savedAfterLock\.readOk \|\| savedAfterLock\.hasStoredState/);
 });
 
 test("preflight state cannot be snapshotted by pagehide or beforeunload", () => {
@@ -729,4 +729,20 @@ test("preflight state cannot be snapshotted by pagehide or beforeunload", () => 
   );
   assert.match(hide, /snapshotGiveaway\(\)/);
   assert.match(initialization, /if \(!giveawayData \|\|[\s\S]*?!proof \|\|/);
+});
+
+test("empty but present recovery key is occupied and blocks a new opening", () => {
+  const empty = recoveryReadHarness({ namespaced: "" }).read("maghuro", { migrateLegacy: true });
+  assert.equal(empty.readOk, true);
+  assert.equal(empty.hasStoredState, true);
+  assert.equal(empty.raw, "");
+  const trulyEmpty = recoveryReadHarness().read("maghuro", { migrateLegacy: true });
+  assert.equal(trulyEmpty.readOk, true);
+  assert.equal(trulyEmpty.hasStoredState, false);
+  const start = lifecycle.slice(
+    lifecycle.indexOf("async function startGiveaway()"),
+    lifecycle.indexOf("if (sponsorsInterval)")
+  );
+  assert.match(start, /if \(prior\.hasStoredState\)/);
+  assert.match(start, /if \(!savedAfterLock\.readOk \|\| savedAfterLock\.hasStoredState/);
 });
