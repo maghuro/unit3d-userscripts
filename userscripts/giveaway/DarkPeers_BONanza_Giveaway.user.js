@@ -4177,6 +4177,11 @@ body.host-panel-dragging * {
                 return;
             }
 
+            // Capture the earliest possible public opening boundary BEFORE the
+            // async chat send. The server can publish the message well before its
+            // successful POST response reaches this tab; waiting for that response
+            // would incorrectly extend a 45-minute giveaway.
+            const openingSendStartedAt = Date.now();
             const introSent = await sendMessage(introMessage, {
                 requireExclusiveGiveawayOwnership: true
             });
@@ -4193,15 +4198,14 @@ body.host-panel-dragging * {
                 return;
             }
 
-            // Public opening is the temporal boundary. The pre-opening Gift History
-            // snapshot means every subsequently appearing received gift is new.
-            giveawayStartTime = new Date();
-            giveawayData.openedAt = giveawayStartTime.getTime();
-            tracker.giveawayStartTs = giveawayStartTime.getTime();
-            // The advertised duration begins at the same public-opening boundary,
-            // not while balance/history preflight or chat delivery is still running.
-            giveawayData.endTs = giveawayStartTime.getTime() + totalTimeMs;
-            giveawayData.timeLeft = totalTimeMs / 1000;
+            // Start no later than the earliest possible public opening. Never
+            // count the chat response latency as extra entry time. Gift History
+            // was bootstrapped before this send, so subsequent gifts remain new.
+            giveawayStartTime = new Date(openingSendStartedAt);
+            giveawayData.openedAt = openingSendStartedAt;
+            tracker.giveawayStartTs = openingSendStartedAt;
+            giveawayData.endTs = openingSendStartedAt + totalTimeMs;
+            syncGiveawayTimeLeft(giveawayData);
             window.__activeTracker = tracker;
 
             try { await tracker.poll(); } catch (e) { console.error(e); }
