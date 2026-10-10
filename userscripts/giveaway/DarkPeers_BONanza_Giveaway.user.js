@@ -258,6 +258,9 @@
 //     Only exact announcements whose complete server timestamp bucket lies
 //     within a persisted, bounded opening attempt can confirm publication;
 //     later repeated or overlapping same-second announcements are rejected.
+//     Gift History timestamps also must start no earlier than the verified
+//     sponsor opening boundary; HTTP error/5xx opening POSTs must never
+//     trigger a second announcement via chatbox fallback.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
@@ -6085,7 +6088,10 @@ body.host-panel-dragging * {
 
                 if (offset !== null && Number.isFinite(wallTs)) {
                     const start = wallTs - offset;
-                    return (min === null || (start + resolutionMs) > min) ? [start] : [];
+                    // A gift bucket overlapping public opening is ambiguous:
+                    // only an interval STARTING at/after the confirmed sponsor
+                    // boundary can be safely attributed to this giveaway.
+                    return (min === null || start >= min) ? [start] : [];
                 }
 
                 return [
@@ -6093,7 +6099,7 @@ body.host-panel-dragging * {
                     Number(item?.createdAtAltTs)
                 ].filter(ts =>
                     Number.isFinite(ts) &&
-                    (min === null || (ts + resolutionMs) > min)
+                    (min === null || ts >= min)
                 );
             };
 
@@ -6173,7 +6179,9 @@ body.host-panel-dragging * {
 
                 if (offset !== null && Number.isFinite(wallTs)) {
                     const eventTs = wallTs - offset;
-                    const afterOpen = min === null || (eventTs + resolutionMs) > min;
+                    // Entire Gift History timestamp bucket must be after
+                    // confirmed publication, not merely overlap its boundary.
+                    const afterOpen = min === null || eventTs >= min;
                     if (!afterOpen) continue;
 
                     if (max === null) {
@@ -6206,7 +6214,7 @@ body.host-panel-dragging * {
                 ].filter(Number.isFinite);
 
                 const openingCandidates = candidates.filter(ts =>
-                    min === null || (ts + resolutionMs) > min
+                    min === null || ts >= min
                 );
                 if (!openingCandidates.length) continue;
 
@@ -12553,6 +12561,10 @@ body.host-panel-dragging * {
         if (!forceChatboxOnly && !DEBUG_SETTINGS.suppressApiMessages) {
             try {
                 if (await trySendViaApi(messageStr)) return true;
+                // A 5xx/non-OK API response might still follow a committed
+                // public POST. An opening must NEVER post again via chatbox:
+                // the durable checkpoint is the only safe recovery path.
+                if (options?.noFallbackOnApiException === true) return false;
             } catch (e) {
                 // An opening POST may already have committed before its reply
                 // timed out. Never issue a second, chatbox-based announcement
@@ -12568,6 +12580,11 @@ body.host-panel-dragging * {
                 if (DEBUG_SETTINGS.verify_sendmessage) console.debug("sendMessage: API send failed, falling back to chatbox method");
             }
         }
+
+        // Opening output is single-shot. Even when the API was deliberately
+        // disabled, missing credentials, or returned non-OK, never silently
+        // publish a second opening through chatbox.
+        if (options?.noFallbackOnApiException === true) return false;
 
         // Settlement output is authoritative. If the API attempt yielded while a
         // BFCache/pagehide handoff quarantined this document, never let the stale
