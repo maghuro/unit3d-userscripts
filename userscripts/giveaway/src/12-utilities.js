@@ -1754,6 +1754,10 @@
         if (!forceChatboxOnly && !DEBUG_SETTINGS.suppressApiMessages) {
             try {
                 if (await trySendViaApi(messageStr)) return true;
+                // A 5xx/non-OK API response might still follow a committed
+                // public POST. An opening must NEVER post again via chatbox:
+                // the durable checkpoint is the only safe recovery path.
+                if (options?.noFallbackOnApiException === true) return false;
             } catch (e) {
                 // An opening POST may already have committed before its reply
                 // timed out. Never issue a second, chatbox-based announcement
