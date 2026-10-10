@@ -534,7 +534,7 @@ test("calibration fractional bias cannot turn a pre-opening gift into a sponsor"
     giftAt(2500, "before"),
     giftAt(4250, "after")
   ], 3000.5, 10000);
-  assert.deepEqual(result.accepted.map(x => x.historyKey), ["after"]);
+  assert.deepEqual(Array.from(result.accepted, x => x.historyKey), ["after"]);
 });
 
 test("the inferred calibration error is propagated and conserved", () => {
