@@ -53,8 +53,13 @@ multiple userscripts, not just BONanza.
   identical old announcement might falsely verify the new opening).
 - Before posting the public giveaway opening, persist and read back a
   **pending opening checkpoint** with the exact prepared announcement,
-  pre-send timestamp and Main Chat cursor. A timeout/ownership loss is
-  ambiguous: do not erase this checkpoint, re-post blindly, or settle BON.
+  pre-send timestamp, Main Chat cursor and a bounded publication window.
+  When the send resolves, persist its completion timestamp to further
+  narrow that window. Reconciliation must prove the **entire** server-side
+  timestamp-resolution bucket lies inside the original opening attempt:
+  same-second overlap or later identical announcements are NOT sufficient.
+  A timeout/ownership loss is ambiguous: do not erase the checkpoint,
+  re-post blindly, or settle BON.
   Restore must verify the exact own-user announcement in authoritative
   Main Chat history before enabling entries or any sponsor/payout action.
 - The 45-minute absolute deadline is anchored to the conservative
