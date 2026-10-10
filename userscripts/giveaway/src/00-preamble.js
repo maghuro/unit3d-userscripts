@@ -258,6 +258,9 @@
 //     Only exact announcements whose complete server timestamp bucket lies
 //     within a persisted, bounded opening attempt can confirm publication;
 //     later repeated or overlapping same-second announcements are rejected.
+//     Gift History timestamps also must start no earlier than the verified
+//     sponsor opening boundary; HTTP error/5xx opening POSTs must never
+//     trigger a second announcement via chatbox fallback.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
