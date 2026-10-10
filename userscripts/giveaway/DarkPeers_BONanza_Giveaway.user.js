@@ -246,6 +246,8 @@
 //     no-send, and restores only the exact unsent terminal marker after durable read-back.
 //   - v1.5.15 enforces DarkPeers' 45-minute maximum from public opening across
 //     the form, presets, host/staff time commands and restored active snapshots.
+//     Rejected !addtime / !time add attempts now announce the 45-minute total
+//     limit publicly, even in Silent Mode, without changing the deadline.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
@@ -7960,7 +7962,23 @@ body.host-panel-dragging * {
                 return;
             }
             if (nextEndTs > maxEndTs) {
-                actionReply(`[color=red]Time change refused:[/color] DarkPeers allows a maximum of ${MAX_GIVEAWAY_MINUTES} minutes from the original opening.`);
+                if (ctx.source === "chat") {
+                    // A rejected !addtime / !time add command needs a visible
+                    // explanation in Main Chat, even with Silent Mode enabled.
+                    // Retain staff attribution; Rehearsal Mode still routes
+                    // outgoing chat safely to the host's private messages.
+                    const publicReply = makeStaffAttributedReply({
+                        ...ctx,
+                        reply: (message) => sendMessage(message)
+                    });
+                    publicReply(
+                        `🚫 [color=red][b]Time limit exceeded![/b][/color] ` +
+                        `DarkPeers giveaways can last at most [b]${MAX_GIVEAWAY_MINUTES} minutes total[/b] ` +
+                        `from opening. [b]No time was added.[/b]`
+                    );
+                } else {
+                    actionReply(`[color=red]Time change refused:[/color] DarkPeers allows a maximum of ${MAX_GIVEAWAY_MINUTES} minutes from the original opening.`);
+                }
                 return;
             }
             giveawayData.endTs = nextEndTs;
