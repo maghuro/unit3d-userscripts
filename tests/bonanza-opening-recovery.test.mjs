@@ -9,6 +9,7 @@ const lifecycle = read("userscripts/giveaway/src/06-lifecycle.js");
 const initialization = read("userscripts/giveaway/src/05-initialization.js");
 const utilities = read("userscripts/giveaway/src/12-utilities.js");
 const commands = read("userscripts/giveaway/src/10-command-handling.js");
+const sponsorship = read("userscripts/giveaway/src/09-sponsorship-polling.js");
 
 function extract(source, signature) {
   const start = source.indexOf("    " + signature);
@@ -396,4 +397,127 @@ test("the bounded send window is persisted before POST and completion before ver
   assert.ok(finished > posted && persistedCompletion > finished && verified > persistedCompletion);
   assert.match(lifecycle, /timestamp < startedAt/);
   assert.match(lifecycle, /\(timestamp \+ resolutionMs\) > windowEnd/);
+});
+
+function sponsorHistoryFilterHarness({ calibrated = true } = {}) {
+  const start = sponsorship.indexOf("        async filterHistoryRowsByWindow(");
+  const end = sponsorship.indexOf("\n        async processGiftHistoryRows(", start);
+  assert.ok(start >= 0 && end > start, "SponsorTracker filter extraction failed");
+  const method = sponsorship.slice(start, end);
+  const ctx = vm.createContext({
+    optionalFiniteNumber: val => val === undefined || val === null ? null : Number(val),
+    DEBUG_SETTINGS: { log_chat_messages: false },
+    unit3dTimestampResolutionMs: () => 1000,
+    normalizeUserKey: x => String(x || "").toLowerCase(),
+    logEvent() {},
+    sanitizeNick: x => x,
+    fmtBONCurrency: x => x
+  });
+  vm.runInContext(`class HistoryFilterTest { ${method} }
+    this.HistoryFilterTest = HistoryFilterTest;`, ctx);
+  const tracker = new ctx.HistoryFilterTest();
+  tracker.data = { endTs: 5000 };
+  tracker.maxAcceptedCreatedAtTs = null;
+  tracker.giftHistoryClockOffsetMs = calibrated ? 0 : null;
+  tracker.giftHistorySeenKeys = new Set();
+  tracker.ensureGiftHistoryClockOffset = async () => calibrated ? 0 : null;
+  tracker.fetchRecentChatGiftEvents = async () => [];
+  return tracker;
+}
+function giftAt(time, key) {
+  return {
+    historyKey: key,
+    sender: "sponsor", recipient: "host", amount: 100,
+    createdAtTs: time, createdAtAltTs: time,
+    rawTimestamp: "2026-10-10 11:00:02",
+    timestampResolutionMs: 1000
+  };
+}
+
+test("calibrated Gift History excludes a coarse gift overlapping the sponsor-opening boundary", async () => {
+  const tracker = sponsorHistoryFilterHarness({ calibrated: true });
+  const result = await tracker.filterHistoryRowsByWindow([
+    giftAt(2000, "before"),
+    giftAt(2001, "after"),
+    giftAt(2500, "later")
+  ], 2000.5, 4500);
+  assert.equal(result.accepted.length, 2);
+  assert.equal(result.accepted[0].historyKey, "after");
+  assert.equal(result.accepted[1].historyKey, "later");
+});
+
+test("fallback Gift History interpretations exclude overlapping opening buckets", async () => {
+  const tracker = sponsorHistoryFilterHarness({ calibrated: false });
+  const result = await tracker.filterHistoryRowsByWindow([
+    giftAt(2000, "before"),
+    giftAt(2001, "after")
+  ], 2000.5, 4500);
+  assert.equal(result.accepted.length, 1);
+  assert.equal(result.accepted[0].historyKey, "after");
+});
+
+test("even without a closing timestamp, an overlapping pre-opening gift is not sponsored", async () => {
+  const tracker = sponsorHistoryFilterHarness();
+  tracker.data.endTs = null;
+  const result = await tracker.filterHistoryRowsByWindow([
+    giftAt(1999, "old"),
+    giftAt(2001, "new")
+  ], 2000.5, null);
+  assert.equal(result.accepted.length, 1);
+  assert.equal(result.accepted[0].historyKey, "new");
+});
+
+test("non-OK opening POST never retries the same announcement via chatbox", async () => {
+  let publicApiCalls = 0;
+  let fallbackCalls = 0;
+  const sandbox = vm.createContext({
+    REHEARSAL_MODE: false,
+    DEBUG_SETTINGS: {
+      disable_chat_output: false, suppressApiMessages: false,
+      verify_sendmessage: false, log_chat_messages: false
+    },
+    OT_USER_ID: 17, OT_CHATROOM_ID: 1, OT_CSRF_TOKEN: "csrf",
+    prepareOutgoingMessage: x => x,
+    fetchWithTimeout: async () => {
+      publicApiCalls++;
+      return { ok: false, status: 500, text: async () => '{"error":"server error"}' };
+    },
+    sendViaChatbox: () => { fallbackCalls++; return true; },
+    console: { error() {}, warn() {} }
+  });
+  vm.runInContext([
+    extract(utilities, "async function trySendViaApi("),
+    openingSend
+  ].join("\n"), sandbox);
+  assert.equal(await sandbox.sendMessage("opening", {
+    prepared: true, noFallbackOnApiException: true
+  }), false);
+  assert.equal(publicApiCalls, 1);
+  assert.equal(fallbackCalls, 0);
+  assert.equal(await sandbox.sendMessage("ordinary", { prepared: true }), true);
+  assert.equal(publicApiCalls, 2);
+  assert.equal(fallbackCalls, 1);
+});
+
+test("opening never falls back when the API is disabled or returns false before posting", async () => {
+  for (const suppressed of [true, false]) {
+    let fallbackCalls = 0;
+    const sandbox = vm.createContext({
+      REHEARSAL_MODE: false,
+      DEBUG_SETTINGS: {
+        disable_chat_output: false, suppressApiMessages: suppressed,
+        verify_sendmessage: false, log_chat_messages: false
+      },
+      OT_USER_ID: 17, OT_CHATROOM_ID: 1, OT_CSRF_TOKEN: "csrf",
+      prepareOutgoingMessage: x => x,
+      trySendViaApi: async () => false,
+      sendViaChatbox: () => { fallbackCalls++; return true; },
+      console: { warn() {} }
+    });
+    vm.runInContext(openingSend, sandbox);
+    assert.equal(await sandbox.sendMessage("opening", {
+      prepared: true, noFallbackOnApiException: true
+    }), false);
+    assert.equal(fallbackCalls, 0);
+  }
 });
