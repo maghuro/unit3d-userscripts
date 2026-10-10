@@ -46,7 +46,11 @@ deadline), while `sponsorStartTs` is derived from the server-confirmed
 announcement timestamp, conservatively beyond its timestamp resolution
 bucket. A valid Main Chat message cursor is mandatory before any LIVE opening;
 without one, abort without posting. A pre-send `openingCheckpoint`
-is durably stored before posting.
+is durably stored before posting, including a fixed upper time boundary.
+On return, the send completion timestamp is also persisted to tighten
+the admissible window. A matching server message must have its **whole
+timestamp-resolution bucket** inside the original bounded POST attempt:
+overlapping same-second buckets and later identical posts remain ambiguous.
 If delivery is ambiguous, preserve it and retry verification on reload;
 do not silently discard the snapshot or perform settlement.
 
