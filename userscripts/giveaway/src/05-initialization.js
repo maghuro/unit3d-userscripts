@@ -521,8 +521,8 @@
         remNumInput = document.getElementById("reminderNum");
         reminderEvery = document.getElementById("reminderEvery");
 
-        // Enforce whole-number minutes in the Time field (no decimals / exponent notation)
-        // (No page refresh required; prevents accidental fractional minutes.)
+        // Enforce whole-number minutes and DarkPeers' 45-minute maximum in the UI.
+        // The start handler separately validates the value against script/DOM bypasses.
         (function enforceWholeMinutesOnTimerField() {
             if (!timerInput) return;
 
@@ -541,10 +541,12 @@
                 }
 
                 if (/^\d+$/.test(v)) {
-                    const n = parseInt(v, 10);
-                    if (Number.isFinite(n) && n >= 1) {
+                    const n = Number(v);
+                    if (Number.isSafeInteger(n) && n >= 1) {
+                        const bounded = String(Math.min(n, MAX_GIVEAWAY_MINUTES));
+                        timerInput.value = bounded;
                         timerInput.setCustomValidity("");
-                        lastValid = v;
+                        lastValid = bounded;
                         return;
                     }
                 }
@@ -967,7 +969,11 @@
         if (coinInput && preset.amount) coinInput.value = preset.amount;
         if (startInput && preset.startNum) startInput.value = preset.startNum;
         if (endInput && preset.endNum) endInput.value = preset.endNum;
-        if (timerInput && preset.timer) timerInput.value = preset.timer;
+        if (timerInput && preset.timer) {
+            const minutes = Number(preset.timer);
+            timerInput.value = Number.isSafeInteger(minutes) && minutes >= 1
+                ? String(Math.min(minutes, MAX_GIVEAWAY_MINUTES)) : "5";
+        }
         if (remNumInput && preset.reminders != null) remNumInput.value = preset.reminders;
         if (winnersInput && preset.winners) winnersInput.value = preset.winners;
         if (scaleWinnersToggleInput) {
@@ -1334,6 +1340,7 @@
                     totalEntries: giveawayData.totalEntries,
                     winningNumber: giveawayData.winningNumber,
                     totalSeconds: giveawayData.totalSeconds,
+                    openedAt: giveawayData.openedAt,
                     endTs: giveawayData.endTs,
                     winnersNum: giveawayData.winnersNum,
                     baseWinnersAtStart: giveawayData.baseWinnersAtStart,
@@ -1476,8 +1483,18 @@
                 return null;
             }
 
-            const overdueMs = Date.now() - endTs;
+            // An older release may have saved a deadline beyond the DarkPeers cap.
+            // Restrict only an uncommitted draw: committed settlement timestamps
+            // are immutable and must survive crash/reload unchanged.
+            const startTs = Number(snap.giveawayData.openedAt ?? snap.startTime);
+            const maxEndTs = getGiveawayMaxEndTs(startTs);
             const committedSettlement = snap.giveawayData?.settlement?.committed === true;
+            const correctedDeadline = !committedSettlement && maxEndTs !== null && endTs > maxEndTs;
+            if (correctedDeadline) {
+                snap.giveawayData.endTs = maxEndTs;
+                console.warn("[BON Giveaway] Recovered deadline capped at 45 minutes after public opening.");
+            }
+            const overdueMs = Date.now() - Number(snap.giveawayData.endTs);
             const closingSettlementLatched =
                 snap.giveawayData?.closingIntent === true ||
                 snap.giveawayData?.closingNoticeSent === true ||
@@ -1486,7 +1503,8 @@
             if (
                 overdueMs > EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS &&
                 !committedSettlement &&
-                !closingSettlementLatched
+                !closingSettlementLatched &&
+                !correctedDeadline
             ) {
                 console.warn("[BON Giveaway] Discarding stale expired active snapshot; automatic settlement grace exceeded.");
                 clearGiveawaySnapshot();
@@ -1648,6 +1666,9 @@
         try {
             // 1) Restore giveaway data
             giveawayData = snap.giveawayData;
+            const restoredOpenTs = Number(giveawayData.openedAt ?? snap.startTime);
+            giveawayData.openedAt = getGiveawayMaxEndTs(restoredOpenTs) !== null
+                ? restoredOpenTs : null;
 
             // Restore starts fail-closed for sponsor accounting. Entries and time
             // may resume, but BON mutation and settlement stay blocked until the
@@ -1769,7 +1790,8 @@
             updateRigToggleUI();
 
             // 4) Restore start time
-            giveawayStartTime = snap.startTime ? new Date(snap.startTime) : new Date();
+            giveawayStartTime = giveawayData.openedAt !== null
+                ? new Date(giveawayData.openedAt) : new Date();
 
             lastKnownGiveawayHostKey = normUserKey(giveawayData.host) || lastKnownGiveawayHostKey;
 
