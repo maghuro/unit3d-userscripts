@@ -839,6 +839,26 @@
                 offset = await this.ensureGiftHistoryClockOffset(rows);
             }
 
+            // Gift History exposes site-local and browser/UTC interpretations.
+            // Without an authoritative calibration we CANNOT pick whichever
+            // interpretation falls after the public opening: the other one may
+            // place the same gift before it. Keep every row retryable, without
+            // modifying sponsor totals or marking gift-history keys as seen.
+            // The canonical settlement reconciliation treats retryable rows as
+            // a hard failure, so no BON payouts can proceed from this state.
+            if (min !== null && offset === null) {
+                logEvent(
+                    "Sponsor accounting paused (clock uncalibrated)",
+                    "Gift History time offset is unknown; deferred all gift rows instead of choosing an ambiguous timestamp interpretation."
+                );
+                return {
+                    accepted: [],
+                    retryableKeys: new Set(
+                        rows.map(item => item?.historyKey).filter(Boolean)
+                    )
+                };
+            }
+
             // Re-read the closing latch after the await above. If endGiveaway()
             // closed the window while this ordinary poll was already in flight,
             // this pass must immediately inherit that cutoff.
