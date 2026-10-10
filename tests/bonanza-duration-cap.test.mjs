@@ -23,18 +23,22 @@ function namedFunction(source, name) {
 const limitFunctions = [
   namedFunction(utilities, "parseGiveawayMinutes"),
   namedFunction(utilities, "getGiveawayMaxEndTs"),
+  namedFunction(commands, "makeStaffAttributedReply"),
   namedFunction(commands, "hostAdjustTime")
 ].join("\n");
 
 function makeHarness(startedAt, initialEndTs) {
   const replies = [];
+  const publicMessages = [];
   let schedules = 0;
   let snapshots = 0;
   const countdownHeader = { textContent: "" };
   const runtime = vm.createContext({
     MAX_GIVEAWAY_MINUTES: 45,
-    isHostOrAdmin: (author, _fancyName, host) => author === host,
-    makeStaffAttributedReply: ({ reply }) => reply,
+    isHostOrAdmin: (author, _fancyName, host) => author === host || author === "staff",
+    isNonHostStaffAction: (author, _fancyName, host) => author === "staff" && author !== host,
+    sanitizeNick: name => name,
+    sendMessage: message => { publicMessages.push(message); return true; },
     rebuildSchedule: () => { schedules++; },
     snapshotGiveaway: () => { snapshots++; },
     parseTime: (ms) => String(ms),
@@ -43,14 +47,14 @@ function makeHarness(startedAt, initialEndTs) {
   vm.runInContext(limitFunctions, runtime);
 
   const giveawayData = { host: "maghuro", openedAt: startedAt, endTs: initialEndTs };
-  const adjust = (sign, minutes, author = "maghuro") => {
+  const adjust = (sign, minutes, author = "maghuro", source = "panel") => {
     runtime.hostAdjustTime(sign)({
-      author, fancyName: "", args: [String(minutes)], giveawayData,
+      author, fancyName: "", args: [String(minutes)], giveawayData, source,
       reply: (message) => replies.push(message)
     });
   };
   return {
-    runtime, giveawayData, replies, adjust,
+    runtime, giveawayData, replies, publicMessages, adjust,
     get schedules() { return schedules; },
     get snapshots() { return snapshots; },
     countdownHeader
@@ -207,4 +211,68 @@ test("a failed opening message never commits its pre-send opening timestamp", as
   })()`, runtime);
   assert.equal(result, undefined);
   assert.equal(resetCalls, 1);
+});
+
+test("a rejected !addtime in chat is announced publicly without changing the timer", () => {
+  const openedAt = Date.now() - 5 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000);
+  h.adjust(1, 6, "maghuro", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 40 * 60_000);
+  assert.equal(h.snapshots, 0);
+  assert.equal(h.schedules, 0);
+  assert.equal(h.replies.length, 0, "chat command bypasses normal private reply / Silent Mode routing");
+  assert.equal(h.publicMessages.length, 1);
+  assert.match(h.publicMessages[0], /Time limit exceeded!/);
+  assert.match(h.publicMessages[0], /45 minutes total/);
+  assert.match(h.publicMessages[0], /No time was added/);
+});
+
+test("staff gets a public, attributed cap warning in chat", () => {
+  const openedAt = Date.now() - 10 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 45 * 60_000);
+  h.adjust(1, 1, "staff", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 45 * 60_000);
+  assert.equal(h.snapshots, 0);
+  assert.equal(h.publicMessages.length, 1);
+  assert.match(h.publicMessages[0], /Staff action by staff/);
+  assert.match(h.publicMessages[0], /Time limit exceeded!/);
+});
+
+test("panel commands keep their previous rejection reply instead of a new chat warning", () => {
+  const openedAt = Date.now() - 5 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000);
+  h.adjust(1, 10, "maghuro", "panel");
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.replies.length, 1);
+  assert.match(h.replies[0], /Time change refused/);
+  assert.doesNotMatch(h.replies[0], /Time limit exceeded!/);
+});
+
+test("allowed chat extensions still change the deadline and use the existing reply path", () => {
+  const openedAt = Date.now() - 5 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000);
+  h.adjust(1, 5, "maghuro", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 45 * 60_000);
+  assert.equal(h.snapshots, 1);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.replies.length, 1);
+  assert.match(h.replies[0], /Added/);
+});
+
+test("unprivileged users cannot trigger public cap notices or mutate the giveaway", () => {
+  const openedAt = Date.now() - 5 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000);
+  h.adjust(1, 10, "random-user", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 40 * 60_000);
+  assert.equal(h.snapshots, 0);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.replies.length, 0);
+});
+
+test("both chat aliases use the public over-limit rejection path", () => {
+  assert.match(commands, /addtime:\s*hostAdjustTime\(\+1\)/);
+  assert.match(commands, /const addMinutes = hostAdjustTime\(\+1\)/);
+  assert.match(commands, /if \(action === "add"\)\s*\{\s*addMinutes\(ctxWithArg\)/);
+  assert.match(commands, /source:\s*"chat"/);
+  assert.match(commands, /if \(ctx\.source === "chat"\)/);
 });
