@@ -270,7 +270,9 @@
 //     Coarse Gift History calibration uncertainty is tracked, saved across
 //     reloads, and subtracted before sponsor-start eligibility checks.
 //     Recovery storage read failures block new giveaways even when raw data
-//     appears absent. Preflight before the persisted opening checkpoint is
+//     appears absent; even empty-but-present recovery keys are occupied.
+//     Before the exclusive Web Lock, reading must not migrate legacy keys.
+//     Preflight before the persisted opening checkpoint is
 //     NEVER snapshotted, including on BFCache/pagehide. Corrupt recovery
 //     snapshots are preserved rather than silently deleted.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
@@ -2916,11 +2918,15 @@ body.host-panel-dragging * {
     function readActiveGiveawayRawForHost(hostName = "", { migrateLegacy = false } = {}) {
         const requestedHostKey = normalizeUserKey(hostName || getLoggedInUsername());
         const storageKey = getActiveGiveawayStorageKey(requestedHostKey);
-        if (!requestedHostKey || !storageKey) return { storageKey, raw: null, migratedLegacy: false, readOk: false };
+        if (!requestedHostKey || !storageKey) return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: false };
 
         try {
             const namespacedRaw = localStorage.getItem(storageKey);
-            if (namespacedRaw) return { storageKey, raw: namespacedRaw, migratedLegacy: false, readOk: true };
+            // Empty but present storage is corrupt/recoverable, NOT vacant.
+            if (namespacedRaw !== null) return {
+                storageKey, raw: namespacedRaw, hasStoredState: true,
+                migratedLegacy: false, readOk: true
+            };
 
             // Backwards-compatible migration from pre-v1.3.24 hostname-wide storage.
             // A legacy snapshot belonging to another account is deliberately left
@@ -2928,28 +2934,31 @@ body.host-panel-dragging * {
             // overwrite that foreign recovery state. Rehearsal storage never
             // imports a live legacy snapshot.
             if (REHEARSAL_MODE) {
-                return { storageKey, raw: null, migratedLegacy: false, readOk: true };
+                return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
             }
             const legacyRaw = localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY);
-            if (!legacyRaw) return { storageKey, raw: null, migratedLegacy: false, readOk: true };
+            if (!legacyRaw) return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
 
             const legacy = JSON.parse(legacyRaw);
             const legacyHostKey = normalizeUserKey(legacy?.giveawayData?.host);
             if (!legacyHostKey || legacyHostKey !== requestedHostKey) {
-                return { storageKey, raw: null, migratedLegacy: false, readOk: true };
+                return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
             }
 
             if (migrateLegacy) {
                 localStorage.setItem(storageKey, legacyRaw);
                 localStorage.removeItem(LS_ACTIVE_GIVEAWAY_LEGACY);
             }
-            return { storageKey, raw: legacyRaw, migratedLegacy: !!migrateLegacy, readOk: true };
+            return {
+                storageKey, raw: legacyRaw, hasStoredState: true,
+                migratedLegacy: !!migrateLegacy, readOk: true
+            };
         } catch (error) {
             // A failed localStorage read (including corrupt legacy JSON) is
             // NOT proof that the active recovery slot is empty. A new giveaway
             // must not overwrite existing state when read integrity is unknown.
             console.warn("[BON Giveaway] Active recovery storage read failed:", error);
-            return { storageKey, raw: null, migratedLegacy: false, readOk: false };
+            return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: false };
         }
     }
 
@@ -4223,15 +4232,17 @@ body.host-panel-dragging * {
         // Never overwrite a recoverable opening whose public POST was ambiguous.
         // The pending snapshot is the only path to reconcile entrants/sponsors
         // after a reload. A second start could otherwise destroy that evidence.
+        // Pre-lock validation is read-only. Any migration of a legacy key
+        // happens only after exclusive ownership has been acquired.
         const prior = readActiveGiveawayRawForHost(getLoggedInUsername(), {
-            migrateLegacy: true
+            migrateLegacy: false
         });
         // localStorage failures must block starts, never look like absence.
         if (!prior.readOk || !prior.storageKey) {
             window.alert("GIVEAWAY START BLOCKED: Cannot read recovery storage reliably. No opening was posted.");
             return;
         }
-        if (prior.raw) {
+        if (prior.hasStoredState) {
             try {
                 const saved = JSON.parse(prior.raw);
                 const proof = saved?.giveawayData?.openingCheckpoint;
@@ -4296,7 +4307,7 @@ body.host-panel-dragging * {
         const savedAfterLock = readActiveGiveawayRawForHost(getLoggedInUsername(), {
             migrateLegacy: true
         });
-        if (!savedAfterLock.readOk || savedAfterLock.raw || !savedAfterLock.storageKey) {
+        if (!savedAfterLock.readOk || savedAfterLock.hasStoredState || !savedAfterLock.storageKey) {
             logEvent("Start blocked (post-lock recovery recheck)",
                 "Saved giveaway state appeared while awaiting the exclusive lock; no new opening was posted.");
             window.alert(
