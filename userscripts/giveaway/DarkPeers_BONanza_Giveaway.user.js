@@ -261,6 +261,10 @@
 //     Gift History timestamps also must start no earlier than the verified
 //     sponsor opening boundary; HTTP error/5xx opening POSTs must never
 //     trigger a second announcement via chatbox fallback.
+//     A second tab must recheck saved recovery AFTER acquiring its Web Lock.
+//     Confirmed LIVE openings are authoritatively rechecked on every restore.
+//     When Gift History calibration is unavailable, ALL ambiguous gift rows
+//     remain uncounted/retryable until reliable calibration succeeds.
 //     Legacy snapshots without verified opening evidence are retained only
 //     for manual recovery (no automatic 45-minute rewrite or BON payout).
 //     Coarse Gift History calibration uncertainty is tracked, saved across
@@ -3574,6 +3578,33 @@ body.host-panel-dragging * {
         }
 
         try {
+            // Local storage alone is not authoritative evidence of a public
+            // opening. For a previously confirmed LIVE giveaway, prove that
+            // the exact original message ID/host/text/timestamp still exists
+            // in Main Chat before restoring entries, pot or settlement. The
+            // verifier checks the original bounded POST window and cursor.
+            const restoredCheckpoint = snap.giveawayData?.openingCheckpoint;
+            if (!REHEARSAL_MODE && restoredCheckpoint?.status === "confirmed") {
+                const verified = await verifyPendingGiveawayOpening(restoredCheckpoint);
+                const savedSponsorStart = optionalFiniteNumber(
+                    snap.giveawayData.sponsorStartTs
+                );
+                if (!verified ||
+                    verified.messageId !== optionalFiniteNumber(restoredCheckpoint.messageId) ||
+                    savedSponsorStart === null ||
+                    verified.sponsorStartTs !== savedSponsorStart) {
+                    logEvent("Confirmed opening recovery deferred",
+                        "Authoritative Main Chat could not reprove the exact saved opening and sponsor boundary.");
+                    window.alert(
+                        "GIVEAWAY RECOVERY PAUSED: The saved opening could not " +
+                        "be verified again against Main Chat. No entries, " +
+                        "sponsor updates or BON settlement will be resumed."
+                    );
+                    releaseTabLock();
+                    return false;
+                }
+            }
+
             // An opening may have reached Main Chat even if its POST response was
             // lost. It was durably checkpointed BEFORE sending; never resume
             // entries, sponsor accounting or settlement until the exact public
@@ -4058,7 +4089,8 @@ body.host-panel-dragging * {
     // release a pending opening snapshot merely because sendMessage returned
     // false; an announced giveaway may already exist publicly.
     async function verifyPendingGiveawayOpening(checkpoint) {
-        if (!checkpoint || checkpoint.status !== "pending" ||
+        if (!checkpoint ||
+            (checkpoint.status !== "pending" && checkpoint.status !== "confirmed") ||
             !checkpoint.preparedMessage || !Number.isFinite(Number(checkpoint.startedAt))) {
             return null;
         }
@@ -4101,6 +4133,11 @@ body.host-panel-dragging * {
                 for (const message of payload.data) {
                     const id = optionalFiniteNumber(message?.id);
                     if (!Number.isSafeInteger(id) || id <= afterId) continue;
+                    // A confirmed checkpoint must identify the SAME original
+                    // announcement after reload. Never replace it with a later
+                    // identical post, even inside the bounded send window.
+                    if (checkpoint.status === "confirmed" &&
+                        id !== optionalFiniteNumber(checkpoint.messageId)) continue;
                     const authorId = Math.floor(Number(message?.user_id ?? message?.user?.id));
                     if (authorId !== senderId) continue;
                     if (String(message?.message ?? "") !== checkpoint.preparedMessage) continue;
@@ -4219,6 +4256,26 @@ body.host-panel-dragging * {
         // another tab: that is the primary cross-tab double-payout defence.
         if (!await acquireTabLock()) {
             window.alert("Could not acquire exclusive giveaway ownership. Another DarkPeers tab may already be running a giveaway, or this browser does not provide the Web Locks safety API.");
+            return;
+        }
+
+        // The check above ran BEFORE ownership was acquired. Two tabs can
+        // both see empty storage; the second may acquire the lock only after
+        // the first has posted (or checkpointed) an ambiguous opening. Read
+        // storage AGAIN while owning the lock. Any remaining snapshot is
+        // recoverable state and must not be replaced by a second opening.
+        const savedAfterLock = readActiveGiveawayRawForHost(getLoggedInUsername(), {
+            migrateLegacy: true
+        });
+        if (savedAfterLock.raw || !savedAfterLock.storageKey) {
+            logEvent("Start blocked (post-lock recovery recheck)",
+                "Saved giveaway state appeared while awaiting the exclusive lock; no new opening was posted.");
+            window.alert(
+                "GIVEAWAY START BLOCKED: A previous giveaway was saved while " +
+                "waiting for this tab's lock. Recover or resolve it before " +
+                "starting another. No new opening has been posted."
+            );
+            releaseTabLock();
             return;
         }
 
@@ -6118,6 +6175,26 @@ body.host-panel-dragging * {
 
             if (offset === null) {
                 offset = await this.ensureGiftHistoryClockOffset(rows);
+            }
+
+            // Gift History exposes site-local and browser/UTC interpretations.
+            // Without an authoritative calibration we CANNOT pick whichever
+            // interpretation falls after the public opening: the other one may
+            // place the same gift before it. Keep every row retryable, without
+            // modifying sponsor totals or marking gift-history keys as seen.
+            // The canonical settlement reconciliation treats retryable rows as
+            // a hard failure, so no BON payouts can proceed from this state.
+            if (min !== null && offset === null) {
+                logEvent(
+                    "Sponsor accounting paused (clock uncalibrated)",
+                    "Gift History time offset is unknown; deferred all gift rows instead of choosing an ambiguous timestamp interpretation."
+                );
+                return {
+                    accepted: [],
+                    retryableKeys: new Set(
+                        rows.map(item => item?.historyKey).filter(Boolean)
+                    )
+                };
             }
 
             // Re-read the closing latch after the await above. If endGiveaway()
