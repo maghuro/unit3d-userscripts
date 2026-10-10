@@ -129,7 +129,7 @@
             window.alert("GIVEAWAY START BLOCKED: Cannot read recovery storage reliably. No opening was posted.");
             return;
         }
-        if (prior.raw) {
+        if (prior.hasStoredState) {
             try {
                 const saved = JSON.parse(prior.raw);
                 const proof = saved?.giveawayData?.openingCheckpoint;
@@ -194,7 +194,7 @@
         const savedAfterLock = readActiveGiveawayRawForHost(getLoggedInUsername(), {
             migrateLegacy: true
         });
-        if (!savedAfterLock.readOk || savedAfterLock.raw || !savedAfterLock.storageKey) {
+        if (!savedAfterLock.readOk || savedAfterLock.hasStoredState || !savedAfterLock.storageKey) {
             logEvent("Start blocked (post-lock recovery recheck)",
                 "Saved giveaway state appeared while awaiting the exclusive lock; no new opening was posted.");
             window.alert(
