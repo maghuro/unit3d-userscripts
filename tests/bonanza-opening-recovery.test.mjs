@@ -592,7 +592,7 @@ test("starting a new giveaway repeats recovery snapshot check inside the acquire
   const guard = lifecycle.slice(afterLock, firstMutation);
   assert.ok(start >= 0 && beforeLock > start && locked > beforeLock);
   assert.ok(afterLock > locked && firstMutation > afterLock);
-  assert.match(guard, /if \(savedAfterLock\.raw \|\| !savedAfterLock\.storageKey\)/);
+  assert.match(guard, /if \(!savedAfterLock\.readOk \|\| savedAfterLock\.raw \|\| !savedAfterLock\.storageKey\)/);
   assert.match(guard, /releaseTabLock\(\)/);
   assert.match(guard, /return;/);
 });
@@ -636,4 +636,97 @@ test("unverified history keys remain retryable across polling and block canonica
   assert.match(sponsorship, /if \(!item\.historyKey \|\| retryableBoundaryKeys\.has\(item\.historyKey\)\) continue/);
   assert.match(sponsorship, /if \(filtered\.retryableKeys\.size\)/);
   assert.match(sponsorship, /Gift History reconciliation found timestamp-boundary rows/);
+});
+
+function recoveryReadHarness({ namespaced = null, legacy = null, throwsOn = "" } = {}) {
+  const storage = new Map();
+  if (namespaced !== null) storage.set("recovery::maghuro", namespaced);
+  if (legacy !== null) storage.set("recovery", legacy);
+  const events = [];
+  const ctx = vm.createContext({
+    REHEARSAL_MODE: false,
+    LS_ACTIVE_GIVEAWAY_LEGACY: "recovery",
+    REHEARSAL_STORAGE_SUFFIX: "",
+    normalizeUserKey: s => String(s || "").toLowerCase(),
+    getLoggedInUsername: () => "maghuro",
+    getActiveGiveawayStorageKey: () => "recovery::maghuro",
+    localStorage: {
+      getItem: key => {
+        if (throwsOn === "read") throw Error("read denied");
+        return storage.has(key) ? storage.get(key) : null;
+      },
+      setItem: (key, value) => {
+        if (throwsOn === "write") throw Error("write denied");
+        storage.set(key, value);
+        events.push("write:" + key);
+      },
+      removeItem: key => {
+        if (throwsOn === "remove") throw Error("remove denied");
+        storage.delete(key);
+      }
+    },
+    console: { warn() {} }
+  });
+  vm.runInContext([
+    extract(initialization, "function readActiveGiveawayRawForHost(")
+  ].join("\n"), ctx);
+  return { read: (...args) => ctx.readActiveGiveawayRawForHost(...args), events };
+}
+
+test("recovery storage access failures never masquerade as empty storage", () => {
+  const denied = recoveryReadHarness({ throwsOn: "read" }).read("maghuro", { migrateLegacy: true });
+  assert.equal(denied.readOk, false);
+  assert.equal(denied.raw, null);
+
+  const malformed = recoveryReadHarness({ legacy: "{bad json" }).read("maghuro", { migrateLegacy: true });
+  assert.equal(malformed.readOk, false);
+  assert.equal(malformed.raw, null);
+
+  const failedWrite = recoveryReadHarness({
+    legacy: JSON.stringify({ giveawayData: { host: "maghuro" } }),
+    throwsOn: "write"
+  }).read("maghuro", { migrateLegacy: true });
+  assert.equal(failedWrite.readOk, false);
+});
+
+test("only positively established empty recovery storage allows start prechecks", () => {
+  const absent = recoveryReadHarness().read("maghuro", { migrateLegacy: true });
+  assert.equal(absent.readOk, true);
+  assert.equal(absent.raw, null);
+  const existing = recoveryReadHarness({
+    namespaced: JSON.stringify({ giveawayData: { host: "maghuro" } })
+  }).read("maghuro", { migrateLegacy: true });
+  assert.equal(existing.readOk, true);
+  assert.ok(existing.raw);
+  const start = lifecycle.slice(
+    lifecycle.indexOf("async function startGiveaway()"),
+    lifecycle.indexOf("if (sponsorsInterval)")
+  );
+  assert.match(start, /if \(!prior\.readOk \|\| !prior\.storageKey\)/);
+  assert.match(start, /if \(!savedAfterLock\.readOk \|\| savedAfterLock\.raw/);
+});
+
+test("preflight state cannot be snapshotted by pagehide or beforeunload", () => {
+  const persistentWrites = [];
+  const sandbox = vm.createContext({
+    giveawayData: { host: "maghuro", openedAt: null, endTs: 123456 },
+    canMutateActiveGiveaway: () => true,
+    window: {},
+    localStorage: { setItem: (...args) => persistentWrites.push(args) }
+  });
+  vm.runInContext(extract(initialization, "function snapshotGiveaway("), sandbox);
+  assert.equal(sandbox.snapshotGiveaway({ force: true, verifyWrite: true }), false);
+  assert.equal(sandbox.snapshotGiveaway(), false);
+  assert.equal(persistentWrites.length, 0);
+  const start = lifecycle.slice(
+    lifecycle.indexOf("async function startGiveaway()"),
+    lifecycle.indexOf("async function resetGiveaway(")
+  );
+  assert.match(start, /if \(!ownsTabLock\(\)\) return;/);
+  const hide = initialization.slice(
+    initialization.indexOf("function handleGiveawayPageHide("),
+    initialization.indexOf("function handleGiveawayPageShow(")
+  );
+  assert.match(hide, /snapshotGiveaway\(\)/);
+  assert.match(initialization, /if \(!giveawayData \|\|[\s\S]*?!proof \|\|/);
 });
