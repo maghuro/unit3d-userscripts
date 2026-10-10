@@ -231,16 +231,19 @@
 
     function makeStaffAttributedReply(ctx) {
         const reply = ctx && typeof ctx.reply === "function" ? ctx.reply : sendMessage;
-        if (!ctx || !isNonHostStaffAction(ctx.author, ctx.fancyName, ctx.giveawayData?.host)) {
+        // Silent Mode sends ALL command responses privately to the invoker,
+        // including staff errors/denials. Staff actions are attributed in the
+        // public chat only when the host has not enabled Silent Mode.
+        if (GENERAL_SETTINGS.silent_mode ||
+            !ctx || !isNonHostStaffAction(ctx.author, ctx.fancyName, ctx.giveawayData?.host)) {
             return reply;
         }
 
         const prefix =
             `👮 [b][color=#5DE2E7]Staff action by ${sanitizeNick(ctx.author)}:[/color][/b] `;
 
-        // Staff intervention is operationally significant and must stay public
-        // even when the host enabled Silent Mode. Rehearsal Mode still suppresses
-        // sendMessage itself, so testing cannot leak messages into live chat.
+        // Public staff attribution remains on when Silent Mode is disabled.
+        // Rehearsal Mode still redirects script output privately to the host.
         return (message) => sendMessage(prefix + message);
     }
 
@@ -1194,15 +1197,10 @@
             }
             if (nextEndTs > maxEndTs) {
                 if (ctx.source === "chat") {
-                    // A rejected !addtime / !time add command needs a visible
-                    // explanation in Main Chat, even with Silent Mode enabled.
-                    // Retain staff attribution; Rehearsal Mode still routes
-                    // outgoing chat safely to the host's private messages.
-                    const publicReply = makeStaffAttributedReply({
-                        ...ctx,
-                        reply: (message) => sendMessage(message)
-                    });
-                    publicReply(
+                    // Use the ordinary command-response route. Silent Mode
+                    // sends this privately to the command author; Rehearsal
+                    // Mode redirects outgoing messages privately to the host.
+                    actionReply(
                         `🚫 [color=red][b]Time limit exceeded![/b][/color] ` +
                         `DarkPeers giveaways can last at most [b]${MAX_GIVEAWAY_MINUTES} minutes total[/b] ` +
                         `from opening. [b]No time was added.[/b]`
