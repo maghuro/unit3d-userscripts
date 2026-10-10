@@ -137,88 +137,28 @@ test("UI, start path, both time commands, and recovered snapshots share the hard
   assert.match(initialization, /snap\.giveawayData\.endTs = maxEndTs/);
 });
 
-test("opening latency counts against the 45-minute cap, not in addition to it", async () => {
-  const start = lifecycle.indexOf("const openingSendStartedAt = Date.now();");
-  const end = lifecycle.indexOf("window.__activeTracker = tracker;", start);
-  assert.ok(start >= 0 && end > start);
-  const openingBlock = lifecycle.slice(
-    start,
-    end + "window.__activeTracker = tracker;".length
-  );
-  assert.match(openingBlock, /const introSent = await sendMessage\(/);
-  assert.ok(
-    openingBlock.indexOf("openingSendStartedAt = Date.now()") <
-    openingBlock.indexOf("await sendMessage(")
-  );
-
-  const sentAt = 1_800_000_000_000;
-  let clock = sentAt;
-  class FakeDate extends Date {
-    static now() { return clock; }
-  }
-  const fakeWindow = { __activeTracker: null, alert() {} };
-  const context = vm.createContext({
-    Date: FakeDate,
-    window: fakeWindow,
-    sendMessage: async () => {
-      // Message is public before its delayed API response.
-      clock += 7000;
-      return true;
-    },
-    syncGiveawayTimeLeft: data => {
-      data.timeLeft = Math.max(0, Math.ceil((data.endTs - clock) / 1000));
-    },
-    logEvent() {},
-    resetGiveaway() {}
-  });
-  const result = await vm.runInContext(`(async () => {
-    let giveawayStartTime = null;
-    const giveawayData = {};
-    const tracker = {};
-    const introMessage = "Giveaway opening";
-    const totalTimeMs = 45 * 60_000;
-    ${openingBlock}
-    return { openingSendStartedAt, started: giveawayStartTime.getTime(),
-      openedAt: giveawayData.openedAt, endTs: giveawayData.endTs,
-      timeLeft: giveawayData.timeLeft,
-      trackerStart: tracker.giveawayStartTs };
-  })()`, context);
-  assert.equal(result.openingSendStartedAt, sentAt);
-  assert.equal(result.started, sentAt);
-  assert.equal(result.openedAt, sentAt);
-  assert.equal(result.trackerStart, sentAt);
-  assert.equal(result.endTs, sentAt + 45 * 60_000);
-  assert.equal(result.timeLeft, 45 * 60 - 7);
-  assert.equal(fakeWindow.__activeTracker.giveawayStartTs, sentAt);
+test("opening time is durably capped from before the asynchronous chat send", () => {
+  const captured = lifecycle.indexOf("const openingSendStartedAt = Date.now();");
+  const checkpoint = lifecycle.indexOf("openingCheckpoint = {", captured);
+  const persist = lifecycle.indexOf("snapshotGiveaway({ force: true, verifyWrite: true })", checkpoint);
+  const send = lifecycle.indexOf("const introSent = await sendMessage(", persist);
+  const verify = lifecycle.indexOf("await verifyPendingGiveawayOpening(", send);
+  assert.ok(captured >= 0 && checkpoint > captured && persist > checkpoint);
+  assert.ok(send > persist && verify > send);
+  assert.match(lifecycle.slice(captured, send), /giveawayData\.endTs = openingSendStartedAt \+ totalTimeMs/);
+  assert.match(lifecycle.slice(captured, send), /giveawayData\.openedAt = openingSendStartedAt/);
+  assert.match(lifecycle.slice(send, verify), /noFallbackOnApiException: true/);
 });
 
-test("a failed opening message never commits its pre-send opening timestamp", async () => {
-  const start = lifecycle.indexOf("const openingSendStartedAt = Date.now();");
-  const end = lifecycle.indexOf("window.__activeTracker = tracker;", start);
-  const openingBlock = lifecycle.slice(
-    start,
-    end + "window.__activeTracker = tracker;".length
-  );
-  let resetCalls = 0;
-  const runtime = vm.createContext({
-    Date,
-    window: { __activeTracker: null, alert() {} },
-    sendMessage: async () => false,
-    logEvent() {},
-    resetGiveaway() { resetCalls++; },
-    syncGiveawayTimeLeft() {}
-  });
-  const result = await vm.runInContext(`(async () => {
-    let giveawayStartTime = null;
-    const giveawayData = {};
-    const tracker = {};
-    const introMessage = "Giveaway opening";
-    const totalTimeMs = 45 * 60_000;
-    ${openingBlock}
-    return { openedAt: giveawayData.openedAt, endTs: giveawayData.endTs };
-  })()`, runtime);
-  assert.equal(result, undefined);
-  assert.equal(resetCalls, 1);
+test("unconfirmed openings are preserved instead of being reset or paid", () => {
+  const start = lifecycle.indexOf("if (!verifiedOpening)");
+  const end = lifecycle.indexOf("giveawayData.sponsorStartTs = verifiedOpening.sponsorStartTs", start);
+  assert.ok(start >= 0 && end > start);
+  const path = lifecycle.slice(start, end);
+  assert.match(path, /releaseTabLock\(\)/);
+  assert.match(path, /return;/);
+  assert.doesNotMatch(path, /resetGiveaway\(\)/);
+  assert.match(path, /opening unconfirmed/i);
 });
 
 test("a rejected !addtime in chat is announced publicly without changing the timer", () => {
