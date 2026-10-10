@@ -208,3 +208,18 @@ test("manual reminder follows private command routing while automatic timers rem
   assert.match(reminder, /return sendCommandResponse\(options\.commandAuthor, msg\)/);
   assert.match(reminder, /return sendMessage\(msg\)/);
 });
+
+test("a confirmed opening enables sponsor accounting only after canonical reconciliation", () => {
+  const anchor = lifecycle.indexOf("giveawayData.sponsorStartTs = verifiedOpening.sponsorStartTs");
+  const code = lifecycle.slice(anchor, lifecycle.indexOf("chatReplayIgnoreBeforeTs = null;", anchor));
+  const reconcile = code.indexOf("await tracker.reconcileCanonicalSponsorAccounting(");
+  const verifyPersist = code.indexOf("snapshotGiveaway({ force: true, verifyWrite: true })", reconcile);
+  const confirmed = code.indexOf("setSponsorAccountingVerificationState(", verifyPersist);
+  const deferred = code.indexOf("scheduleSponsorAccountingRecovery(tracker)");
+  assert.ok(reconcile >= 0, "Must reconcile canonical Gift History after verified opening");
+  assert.ok(verifyPersist > reconcile, "Must persist canonical reconciliation");
+  assert.ok(confirmed > verifyPersist, "Cannot enable accounting before persistence");
+  assert.ok(deferred > confirmed, "On failure recovery remains retryable");
+  assert.match(code, /if \(giveawayData\.__sponsorAccountingVerified === true\)/);
+  assert.match(code, /scheduleSponsorAccountingRecovery\(tracker\)/);
+});
