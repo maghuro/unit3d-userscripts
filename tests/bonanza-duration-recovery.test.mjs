@@ -70,7 +70,7 @@ function recoveryHarness({
     REHEARSAL_MODE: false,
     normalizeUserKey: (value) => String(value || "").toLowerCase(),
     getLoggedInUsername: () => "maghuro",
-    readActiveGiveawayRawForHost: () => ({ raw: JSON.stringify(snap) }),
+    readActiveGiveawayRawForHost: () => ({ readOk: true, raw: JSON.stringify(snap) }),
     clearGiveawaySnapshot: () => { clears.push(true); },
     console: { warn: (message) => warnings.push(message) }
   });
@@ -289,4 +289,39 @@ test("restore and new-start entry points reject old snapshots before any mutatio
   assert.match(restore, /if \(snap\.__legacyOpeningUnverified === true \|\|/);
   assert.match(restore, /return false;/);
   assert.doesNotMatch(restore, /acquireTabLock\(/);
+});
+
+test("malformed recovery data is preserved without any silent deletion", () => {
+  const clears = [];
+  const runtime = vm.createContext({
+    REHEARSAL_MODE: false,
+    MAX_GIVEAWAY_MINUTES: 45,
+    MAX_REMINDERS: 6,
+    EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS: 60 * MINUTE,
+    normalizeUserKey: x => String(x || "").toLowerCase(),
+    getLoggedInUsername: () => "maghuro",
+    readActiveGiveawayRawForHost: () => ({
+      readOk: true, raw: "{malformed recovery"
+    }),
+    clearGiveawaySnapshot: () => clears.push(true),
+    console: { warn() {} }
+  });
+  vm.runInContext(functions, runtime);
+  assert.equal(runtime.loadGiveawaySnapshot(), null);
+  assert.equal(clears.length, 0);
+});
+
+test("unreadable recovery storage cannot trigger deletion or auto-restore", () => {
+  const clears = [];
+  const runtime = vm.createContext({
+    REHEARSAL_MODE: false,
+    normalizeUserKey: x => String(x || "").toLowerCase(),
+    getLoggedInUsername: () => "maghuro",
+    readActiveGiveawayRawForHost: () => ({ readOk: false, raw: null }),
+    clearGiveawaySnapshot: () => clears.push(true),
+    console: { warn() {} }
+  });
+  vm.runInContext(functions, runtime);
+  assert.equal(runtime.loadGiveawaySnapshot(), null);
+  assert.equal(clears.length, 0);
 });
