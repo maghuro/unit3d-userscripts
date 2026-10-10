@@ -3630,7 +3630,14 @@ body.host-panel-dragging * {
 
             lastKnownGiveawayHostKey = normUserKey(giveawayData.host) || lastKnownGiveawayHostKey;
 
-            // 5) Lock form fields
+            // 5) Lock form fields. Keep the restored reminder count reflected
+            // in the UI: a later !addtime/!removetime rebuilds from this field.
+            if (remNumInput) {
+                const savedReminderCount = Number(giveawayData.reminderNum);
+                remNumInput.value = String(Number.isFinite(savedReminderCount)
+                    ? Math.max(0, Math.min(MAX_REMINDERS, Math.floor(savedReminderCount)))
+                    : 0);
+            }
             startButton.disabled = false;
             coinInput.disabled = true;
             startInput.disabled = true;
