@@ -246,8 +246,9 @@
 //     no-send, and restores only the exact unsent terminal marker after durable read-back.
 //   - v1.5.15 enforces DarkPeers' 45-minute maximum from public opening across
 //     the form, presets, host/staff time commands and restored active snapshots.
-//     Rejected !addtime / !time add attempts now announce the 45-minute total
-//     limit publicly, even in Silent Mode, without changing the deadline.
+//     Rejected !addtime / !time add attempts explain the 45-minute total
+//     limit without changing the deadline. Silent Mode sends all host/staff
+//     command replies privately; Rehearsal routes script output to host PMs.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
@@ -7000,16 +7001,19 @@ body.host-panel-dragging * {
 
     function makeStaffAttributedReply(ctx) {
         const reply = ctx && typeof ctx.reply === "function" ? ctx.reply : sendMessage;
-        if (!ctx || !isNonHostStaffAction(ctx.author, ctx.fancyName, ctx.giveawayData?.host)) {
+        // Silent Mode sends ALL command responses privately to the invoker,
+        // including staff errors/denials. Staff actions are attributed in the
+        // public chat only when the host has not enabled Silent Mode.
+        if (GENERAL_SETTINGS.silent_mode ||
+            !ctx || !isNonHostStaffAction(ctx.author, ctx.fancyName, ctx.giveawayData?.host)) {
             return reply;
         }
 
         const prefix =
             `👮 [b][color=#5DE2E7]Staff action by ${sanitizeNick(ctx.author)}:[/color][/b] `;
 
-        // Staff intervention is operationally significant and must stay public
-        // even when the host enabled Silent Mode. Rehearsal Mode still suppresses
-        // sendMessage itself, so testing cannot leak messages into live chat.
+        // Public staff attribution remains on when Silent Mode is disabled.
+        // Rehearsal Mode still redirects script output privately to the host.
         return (message) => sendMessage(prefix + message);
     }
 
@@ -7963,15 +7967,10 @@ body.host-panel-dragging * {
             }
             if (nextEndTs > maxEndTs) {
                 if (ctx.source === "chat") {
-                    // A rejected !addtime / !time add command needs a visible
-                    // explanation in Main Chat, even with Silent Mode enabled.
-                    // Retain staff attribution; Rehearsal Mode still routes
-                    // outgoing chat safely to the host's private messages.
-                    const publicReply = makeStaffAttributedReply({
-                        ...ctx,
-                        reply: (message) => sendMessage(message)
-                    });
-                    publicReply(
+                    // Use the ordinary command-response route. Silent Mode
+                    // sends this privately to the command author; Rehearsal
+                    // Mode redirects outgoing messages privately to the host.
+                    actionReply(
                         `🚫 [color=red][b]Time limit exceeded![/b][/color] ` +
                         `DarkPeers giveaways can last at most [b]${MAX_GIVEAWAY_MINUTES} minutes total[/b] ` +
                         `from opening. [b]No time was added.[/b]`
