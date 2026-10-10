@@ -270,7 +270,9 @@
 //     Coarse Gift History calibration uncertainty is tracked, saved across
 //     reloads, and subtracted before sponsor-start eligibility checks.
 //     Recovery storage read failures block new giveaways even when raw data
-//     appears absent. Preflight before the persisted opening checkpoint is
+//     appears absent; even empty-but-present recovery keys are occupied.
+//     Before the exclusive Web Lock, reading must not migrate legacy keys.
+//     Preflight before the persisted opening checkpoint is
 //     NEVER snapshotted, including on BFCache/pagehide. Corrupt recovery
 //     snapshots are preserved rather than silently deleted.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
