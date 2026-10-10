@@ -20,7 +20,7 @@ test("review hardening invariants stay present", () => {
   assert.match(source, /Rehearsal BON Pool contribution suppressed/);
   assert.equal(
     (source.match(/getLatestChatMessageId\(DARKPEERS_MAIN_CHATROOM_ID\)/g) || []).length,
-    4
+    5 // Including the pre-send opening cursor for ambiguous POST recovery
   );
   assert.equal(
     (source.match(/getLatestChatMessageId\(DARKPEERS_CHATROOM_ID\)/g) || []).length,
