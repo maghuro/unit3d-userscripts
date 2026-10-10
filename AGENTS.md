@@ -77,11 +77,19 @@ multiple userscripts, not just BONanza.
 - After acquiring the exclusive Web Lock, read saved recovery storage AGAIN
   before mutating state or posting. Another tab may have saved an uncertain
   opening while waiting for the lock; do not overwrite any such state.
+  **Restores must also re-read and revalidate the COMPLETE latest snapshot
+  under that lock**, discarding the pre-lock in-memory object: another tab
+  could have persisted payout/settlement progress while ownership was queued.
+  Never replace a newer committed settlement with stale recovery data.
   The recovery reader reports `readOk` separately from `raw`: a denied
   localStorage read, corrupt legacy JSON or migration failure MUST block the
   start, never appear as empty storage. An empty STRING in an existing
   recovery slot is still an occupied (corrupt) record. Keep pre-lock reads
   read-only, performing any legacy migration under exclusive ownership.
+  A legacy key containing an empty string is PRESENT, not absent: test
+  `getItem() === null` to prove absence. `loadGiveawaySnapshot()` must never
+  delete, migrate, or alter recovery storage before acquiring the Web Lock;
+  stale/expired data needs manual review, not speculative cleanup.
 - **Preflight is not an opening.** Before a durable `openingCheckpoint`
   exists, the in-memory configuration MUST NOT be snapshotted by pagehide,
   beforeunload or other background persistence. A BFCache handoff during
