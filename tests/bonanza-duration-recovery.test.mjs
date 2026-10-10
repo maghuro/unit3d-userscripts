@@ -32,6 +32,7 @@ function recoveryHarness({
   ageMinutes,
   advertisedMinutes = 90,
   reminderCount = 1,
+  openingCheckpoint = null,
   settlement = null,
   closingIntent = false,
   closingNoticeSent = false
@@ -46,6 +47,7 @@ function recoveryHarness({
       host: "maghuro",
       rehearsalMode: false,
       endTs: originalEnd,
+      openingCheckpoint,
       reminderNum: reminderCount,
       reminderSchedule: [Math.round(advertisedMinutes / (reminderCount + 1) * MINUTE)],
       reminderFreqSec: advertisedMinutes * 60 / (reminderCount + 1),
@@ -205,4 +207,22 @@ test("restored reminder count also hydrates the UI for later host/staff time cha
     initialization,
     /if \(remNumInput\) \{[\s\S]*?remNumInput\.value = String\(Number\.isFinite\(savedReminderCount\)/
   );
+});
+
+test("ancient uncertain opening retains recovery checkpoint without auto-settlement", () => {
+  const h = recoveryHarness({
+    ageMinutes: 3 * 24 * 60,
+    advertisedMinutes: 90,
+    openingCheckpoint: {
+      status: "pending",
+      startedAt: NOW - 3 * 24 * 60 * MINUTE,
+      preparedMessage: "Public giveaway intro"
+    }
+  });
+  const pending = h.restore();
+  assert.ok(pending);
+  assert.equal(pending.giveawayData.openingCheckpoint.status, "pending");
+  assert.equal(pending.__expiredAtLoad, true);
+  assert.equal(pending.giveawayData.endTs, h.cappedEnd);
+  assert.equal(h.clears.length, 0, "Never erase a possibly-public opening without authoritative reconciliation");
 });
