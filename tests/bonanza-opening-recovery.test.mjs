@@ -529,10 +529,11 @@ test("calibration fractional bias cannot turn a pre-opening gift into a sponsor"
   // 750ms later and falls beyond the 3000.5ms opening boundary.
   tracker.giftHistoryClockOffsetMs = -750;
   tracker.giftHistoryClockOffsetUncertaintyMs = 1000;
+  tracker.data.endTs = 10000;
   const result = await tracker.filterHistoryRowsByWindow([
     giftAt(2500, "before"),
     giftAt(4250, "after")
-  ], 3000.5, 4500);
+  ], 3000.5, 10000);
   assert.deepEqual(result.accepted.map(x => x.historyKey), ["after"]);
 });
 
