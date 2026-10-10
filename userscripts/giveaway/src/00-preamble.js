@@ -261,6 +261,10 @@
 //     Gift History timestamps also must start no earlier than the verified
 //     sponsor opening boundary; HTTP error/5xx opening POSTs must never
 //     trigger a second announcement via chatbox fallback.
+//     A second tab must recheck saved recovery AFTER acquiring its Web Lock.
+//     Confirmed LIVE openings are authoritatively rechecked on every restore.
+//     When Gift History calibration is unavailable, ALL ambiguous gift rows
+//     remain uncounted/retryable until reliable calibration succeeds.
 //     Legacy snapshots without verified opening evidence are retained only
 //     for manual recovery (no automatic 45-minute rewrite or BON payout).
 //     Coarse Gift History calibration uncertainty is tracked, saved across
