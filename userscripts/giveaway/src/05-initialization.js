@@ -1482,6 +1482,32 @@
                 return null;
             }
 
+            // Pre-checkpoint releases never proved that an opening reached
+            // Main Chat, and their startTime was recorded AFTER the send.
+            // Preserve the original raw snapshot, including old/expired and
+            // partially-paid records, but NEVER auto-resume or auto-settle it.
+            // Rewriting its 45-minute deadline from that late startTime would
+            // also violate the absolute public-opening cap.
+            const checkpoint = snap.giveawayData.openingCheckpoint;
+            if (!checkpoint || (
+                checkpoint.status !== "pending" &&
+                checkpoint.status !== "confirmed"
+            ) || (
+                checkpoint.status === "confirmed" &&
+                (!Number.isFinite(Number(snap.giveawayData.openedAt)) ||
+                 Number(snap.giveawayData.openedAt) <= 0 ||
+                 !Number.isFinite(Number(snap.giveawayData.sponsorStartTs)) ||
+                 Number(snap.giveawayData.sponsorStartTs) <
+                     Number(snap.giveawayData.openedAt))
+            )) {
+                console.warn(
+                    "[BON Giveaway] Unverified legacy opening retained for manual review; " +
+                    "automatic resume, deadline migration and BON settlement are blocked."
+                );
+                snap.__legacyOpeningUnverified = true;
+                return snap;
+            }
+
             const endTs = Number(snap.giveawayData.endTs);
             if (!Number.isFinite(endTs) || endTs <= 0) {
                 clearGiveawaySnapshot();
@@ -1642,6 +1668,28 @@
 
     async function restoreGiveawayFromSnapshot(snap) {
         if (!snap || !snap.giveawayData) return false;
+
+        // Do not let pre-checkpoint snapshots enter any automatic restore path,
+        // even if an alternate caller bypasses loadGiveawaySnapshot(). Keep
+        // persistent entries and paid-gift ledgers untouched for manual review.
+        const proof = snap.giveawayData.openingCheckpoint;
+        if (snap.__legacyOpeningUnverified === true ||
+            !proof || (proof.status !== "pending" && proof.status !== "confirmed") ||
+            (proof.status === "confirmed" &&
+             (!Number.isFinite(Number(snap.giveawayData.openedAt)) ||
+              Number(snap.giveawayData.openedAt) <= 0 ||
+              !Number.isFinite(Number(snap.giveawayData.sponsorStartTs)) ||
+              Number(snap.giveawayData.sponsorStartTs) <
+                  Number(snap.giveawayData.openedAt)))) {
+            console.warn("[BON Giveaway] Legacy opening lacks verified publication proof; keeping original snapshot.");
+            window.alert(
+                "GIVEAWAY RECOVERY REQUIRES MANUAL REVIEW: This older snapshot " +
+                "does not prove that its opening was published or when it began. " +
+                "Automatic entries, countdown changes and BON settlement are blocked. " +
+                "The original recovery state was preserved."
+            );
+            return false;
+        }
 
         // Validate the live DarkPeers identity/Main Chat context BEFORE claiming
         // ownership or touching the recoverable snapshot. A transient/wrong chat
