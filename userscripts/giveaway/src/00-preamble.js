@@ -246,8 +246,9 @@
 //     no-send, and restores only the exact unsent terminal marker after durable read-back.
 //   - v1.5.15 enforces DarkPeers' 45-minute maximum from public opening across
 //     the form, presets, host/staff time commands and restored active snapshots.
-//     Rejected !addtime / !time add attempts now announce the 45-minute total
-//     limit publicly, even in Silent Mode, without changing the deadline.
+//     Rejected !addtime / !time add attempts explain the 45-minute total
+//     limit without changing the deadline. Silent Mode sends all host/staff
+//     command replies privately; Rehearsal routes script output to host PMs.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
