@@ -1075,51 +1075,71 @@
     function readActiveGiveawayRawForHost(hostName = "", { migrateLegacy = false } = {}) {
         const requestedHostKey = normalizeUserKey(hostName || getLoggedInUsername());
         const storageKey = getActiveGiveawayStorageKey(requestedHostKey);
-        if (!requestedHostKey || !storageKey) return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: false };
+        if (!requestedHostKey || !storageKey) {
+            return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: false };
+        }
 
+        // Namespaced recovery never proves the old hostname-wide slot empty.
+        // Both slots may contain distinct settlement evidence for real BON.
+        let hasStoredState = false;
         try {
             const namespacedRaw = localStorage.getItem(storageKey);
-            // Empty but present storage is corrupt/recoverable, NOT vacant.
-            if (namespacedRaw !== null) return {
-                storageKey, raw: namespacedRaw, hasStoredState: true,
+            const hasNamespacedState = namespacedRaw !== null;
+            hasStoredState = hasNamespacedState;
+            const namespacedResult = {
+                storageKey, raw: namespacedRaw, hasStoredState: hasNamespacedState,
                 migratedLegacy: false, readOk: true
             };
 
-            // Backwards-compatible migration from pre-v1.3.24 hostname-wide storage.
-            // A legacy snapshot belonging to another account is deliberately left
-            // untouched; the current account now has its own namespace and cannot
-            // overwrite that foreign recovery state. Rehearsal storage never
-            // imports a live legacy snapshot.
-            if (REHEARSAL_MODE) {
-                return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
-            }
+            // Rehearsal is isolated from the LIVE legacy recovery key.
+            if (REHEARSAL_MODE) return namespacedResult;
+
             const legacyRaw = localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY);
-            // null means absent; even "" is an occupied/corrupt recovery slot.
-            // Never use truthiness when deciding whether BON recovery exists.
-            if (legacyRaw === null) return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
+            // Only null means absent, even if the current namespace is occupied.
+            if (legacyRaw === null) return namespacedResult;
+            hasStoredState = true;
 
             const legacy = JSON.parse(legacyRaw);
-            // Never coerce an object/array/number into a plausible username:
-            // legacy recovery ownership requires an actual saved username.
             const legacyHost = legacy?.giveawayData?.host;
+            // Reject non-string host identities rather than coercing a
+            // malicious/broken array, object or number into a username.
             const legacyHostKey = typeof legacyHost === "string"
                 ? normalizeUserKey(legacyHost) : "";
+
             if (!legacyHostKey) {
-                // Missing host identity is NOT proof of empty recovery storage.
-                // This may contain real BON settlement evidence: keep its bytes.
-                console.warn("[BON Giveaway] Hostless legacy recovery is occupied; manual review required.");
+                console.warn("[BON Giveaway] Unidentified legacy recovery is occupied; manual review required.");
                 return {
                     storageKey, raw: legacyRaw, hasStoredState: true,
                     migratedLegacy: false, readOk: false
                 };
             }
+
             if (legacyHostKey !== requestedHostKey) {
-                // Only a positively identified different host may be ignored.
-                return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: true };
+                // Only a positively identified different host can be ignored.
+                return namespacedResult;
             }
 
+            if (hasNamespacedState) {
+                // Same host is NOT the same settlement. A stale copy can
+                // omit already-paid ledger entries. Never auto-restore while
+                // conflicting same-host records are present.
+                if (namespacedRaw !== legacyRaw) {
+                    console.warn("[BON Giveaway] Conflicting same-host recovery slots; manual review required.");
+                    return {
+                        storageKey, raw: namespacedRaw, hasStoredState: true,
+                        migratedLegacy: false, readOk: false
+                    };
+                }
+                return namespacedResult;
+            }
+
+            // Only the locked restore path migrates the single identified
+            // legacy record. Never delete it before read-back confirmation.
             if (migrateLegacy) {
                 localStorage.setItem(storageKey, legacyRaw);
+                if (localStorage.getItem(storageKey) !== legacyRaw) {
+                    throw new Error("Legacy migration read-back mismatch");
+                }
                 localStorage.removeItem(LS_ACTIVE_GIVEAWAY_LEGACY);
             }
             return {
@@ -1127,11 +1147,12 @@
                 migratedLegacy: !!migrateLegacy, readOk: true
             };
         } catch (error) {
-            // A failed localStorage read (including corrupt legacy JSON) is
-            // NOT proof that the active recovery slot is empty. A new giveaway
-            // must not overwrite existing state when read integrity is unknown.
+            // Storage or JSON failure is NOT evidence of vacant recovery.
             console.warn("[BON Giveaway] Active recovery storage read failed:", error);
-            return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: false };
+            return {
+                storageKey, raw: null, hasStoredState,
+                migratedLegacy: false, readOk: false
+            };
         }
     }
 

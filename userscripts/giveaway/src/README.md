@@ -74,6 +74,11 @@ An empty legacy value is occupied/corrupt (only `null` means absent).
 Valid legacy JSON without a usable host (`{}`, `{"giveawayData":{}}`, etc.)
 is likewise occupied and unidentified: block new live openings, retain the
 original bytes, and require manual review. A known DIFFERENT host may be ignored.
+Even with an existing namespaced snapshot, always inspect the legacy slot:
+block any malformed/unidentified record or inconsistent same-host settlement
+state (only byte-identical duplicates are safe). Keep both records for manual
+investigation rather than trusting an older payout ledger. Migrations require
+an exclusive lock and successful read-back before removing legacy storage.
 The initial snapshot loader must not clear even expired state: preserve it
 for manual review instead of altering shared recovery before locking.
 Snapshots are forbidden during balance/history/cursor preflight, before a

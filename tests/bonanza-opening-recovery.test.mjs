@@ -857,3 +857,51 @@ test("restore rejects stale recovery flags only after refreshing under exclusive
   assert.match(lockedGuard, /releaseTabLock\(\)/);
   assert.match(lockedGuard, /return false;/);
 });
+
+test("coexisting namespaced recovery rejects corrupt and inconsistent legacy evidence", () => {
+  const current = JSON.stringify({
+    giveawayData: { host: "maghuro", settlement: { committed: true, ledger: ["already-paid"] } }
+  });
+  const conflicting = [
+    "", "{invalid", "{}", '{"giveawayData":{}}',
+    '{"giveawayData":{"host":[]}}',
+    JSON.stringify({ giveawayData: { host: "maghuro", settlement: { committed: false } } })
+  ];
+  for (const legacy of conflicting) {
+    for (const migrateLegacy of [false, true]) {
+      const h = recoveryReadHarness({ namespaced: current, legacy });
+      const state = h.read("maghuro", { migrateLegacy });
+      assert.equal(state.readOk, false, "Unresolved old evidence cannot enable real settlement");
+      assert.equal(state.hasStoredState, true);
+      assert.equal(state.migratedLegacy, false);
+      assert.deepEqual(h.events, [], "Keep both records intact for manual review");
+    }
+  }
+});
+
+test("byte-identical same-host recovery copies are accepted without mutation", () => {
+  const identical = JSON.stringify({ giveawayData: { host: "maghuro" }, entries: [7, 8] });
+  for (const migrateLegacy of [false, true]) {
+    const h = recoveryReadHarness({ namespaced: identical, legacy: identical });
+    const state = h.read("maghuro", { migrateLegacy });
+    assert.equal(state.readOk, true);
+    assert.equal(state.hasStoredState, true);
+    assert.equal(state.raw, identical);
+    assert.equal(state.migratedLegacy, false);
+    assert.deepEqual(h.events, []);
+  }
+});
+
+test("positively foreign legacy evidence does not mask valid namespaced recovery", () => {
+  const current = JSON.stringify({ giveawayData: { host: "maghuro" } });
+  const legacy = JSON.stringify({ giveawayData: { host: "another-host" } });
+  for (const migrateLegacy of [false, true]) {
+    const h = recoveryReadHarness({ namespaced: current, legacy });
+    const state = h.read("maghuro", { migrateLegacy });
+    assert.equal(state.readOk, true);
+    assert.equal(state.hasStoredState, true);
+    assert.equal(state.raw, current);
+    assert.equal(state.migratedLegacy, false);
+    assert.deepEqual(h.events, []);
+  }
+});

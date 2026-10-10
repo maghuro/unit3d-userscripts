@@ -94,6 +94,11 @@ multiple userscripts, not just BONanza.
   identifiable host (such as `{}` or `{"giveawayData":{}}`) remains an
   occupied, unidentified record. Fail closed and preserve it for manual
   review: ONLY a positively identified foreign host may be ignored.
+  ALWAYS inspect the old legacy slot even when namespaced recovery exists.
+  Corrupt, unidentified or different SAME-HOST snapshots must block automatic
+  recovery/settlement; identical same-host records are safe to read, as is
+  a positively identified different host. Never delete a legacy record until
+  an exclusive-lock migration has been written and read back successfully.
   `loadGiveawaySnapshot()` must never
   delete, migrate, or alter recovery storage before acquiring the Web Lock;
   stale/expired data needs manual review, not speculative cleanup.
