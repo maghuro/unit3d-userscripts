@@ -261,6 +261,10 @@
 //     Gift History timestamps also must start no earlier than the verified
 //     sponsor opening boundary; HTTP error/5xx opening POSTs must never
 //     trigger a second announcement via chatbox fallback.
+//     Legacy snapshots without verified opening evidence are retained only
+//     for manual recovery (no automatic 45-minute rewrite or BON payout).
+//     Coarse Gift History calibration uncertainty is tracked, saved across
+//     reloads, and subtracted before sponsor-start eligibility checks.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
