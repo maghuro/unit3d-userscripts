@@ -1774,6 +1774,11 @@
             }
         }
 
+        // Opening output is single-shot. Even when the API was deliberately
+        // disabled, missing credentials, or returned non-OK, never silently
+        // publish a second opening through chatbox.
+        if (options?.noFallbackOnApiException === true) return false;
+
         // Settlement output is authoritative. If the API attempt yielded while a
         // BFCache/pagehide handoff quarantined this document, never let the stale
         // continuation escape through the synchronous chatbox fallback.
