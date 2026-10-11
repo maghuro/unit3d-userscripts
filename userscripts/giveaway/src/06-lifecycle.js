@@ -1,6 +1,100 @@
     // SECTION 6: Giveaway Lifecycle
     // ───────────────────────────────────────────────────────────
 
+    // The opening POST has a 7s HTTP timeout. Allow limited transport overhead
+    // for recovering an ambiguous result, but NEVER accept an announcement
+    // sent minutes/hours later as this giveaway's opening.
+    const OPENING_POST_MAX_PUBLICATION_WINDOW_MS = 10000;
+
+    // Reconcile an opening announcement against authoritative Main Chat history.
+    // An HTTP timeout is NOT evidence the server rejected the POST. Never
+    // release a pending opening snapshot merely because sendMessage returned
+    // false; an announced giveaway may already exist publicly.
+    async function verifyPendingGiveawayOpening(checkpoint) {
+        if (!checkpoint ||
+            (checkpoint.status !== "pending" && checkpoint.status !== "confirmed") ||
+            !checkpoint.preparedMessage || !Number.isFinite(Number(checkpoint.startedAt))) {
+            return null;
+        }
+
+        const afterId = optionalFiniteNumber(checkpoint.afterMessageId);
+        // A missing pre-send cursor makes same-second identical announcements
+        // indistinguishable. Never auto-confirm such a snapshot or payout.
+        if (!Number.isSafeInteger(afterId) || afterId <= 0) return null;
+        const startedAt = Number(checkpoint.startedAt);
+        const persistedHardEnd = optionalFiniteNumber(checkpoint.windowEndAt);
+        const completedAt = optionalFiniteNumber(checkpoint.sendCompletedAt);
+        const absoluteHardEnd = startedAt + OPENING_POST_MAX_PUBLICATION_WINDOW_MS;
+        // An absent completion time means the tab may have crashed mid-POST:
+        // the pre-persisted hard window is still authoritative. A recorded
+        // completion can only NARROW the window, never extend it.
+        const windowEnd = Math.min(
+            absoluteHardEnd,
+            persistedHardEnd === null ? absoluteHardEnd : persistedHardEnd,
+            completedAt === null ? absoluteHardEnd : completedAt
+        );
+        if (!Number.isFinite(startedAt) || !Number.isFinite(windowEnd) ||
+            windowEnd <= startedAt) return null;
+        const senderId = Math.floor(Number(OT_USER_ID));
+        if (!Number.isFinite(senderId) || senderId <= 0) return null;
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+            if (!ownsTabLock()) return null;
+            try {
+                const url = new URL(`/api/chat/messages/${DARKPEERS_MAIN_CHATROOM_ID}`, location.origin);
+                if (afterId !== null) url.searchParams.set("after_id", String(afterId));
+                const response = await fetchWithTimeout(
+                    url, { credentials: "include", cache: "no-store" }, 5000
+                );
+                if (!ownsTabLock()) return null;
+                if (!response?.ok) throw new Error("Opening verification chat read failed");
+                const payload = await response.json();
+                if (!ownsTabLock()) return null;
+                if (!Array.isArray(payload?.data)) throw new Error("Malformed Main Chat messages");
+
+                for (const message of payload.data) {
+                    const id = optionalFiniteNumber(message?.id);
+                    if (!Number.isSafeInteger(id) || id <= afterId) continue;
+                    // A confirmed checkpoint must identify the SAME original
+                    // announcement after reload. Never replace it with a later
+                    // identical post, even inside the bounded send window.
+                    if (checkpoint.status === "confirmed" &&
+                        id !== optionalFiniteNumber(checkpoint.messageId)) continue;
+                    const authorId = Math.floor(Number(message?.user_id ?? message?.user?.id));
+                    if (authorId !== senderId) continue;
+                    if (String(message?.message ?? "") !== checkpoint.preparedMessage) continue;
+
+                    const rawTs = String(message?.created_at || "");
+                    const timestamp = Date.parse(rawTs);
+                    const resolutionMs = unit3dTimestampResolutionMs(rawTs);
+                    // Require the ENTIRE server timestamp bucket to be inside
+                    // the original, bounded opening POST window. A bucket that
+                    // overlaps the pre-send boundary is ambiguous and must not
+                    // confirm an unrelated same-second message. An identical
+                    // message sent after this attempt cannot confirm it either.
+                    if (!Number.isFinite(timestamp) ||
+                        !Number.isFinite(resolutionMs) || resolutionMs <= 0 ||
+                        timestamp < startedAt ||
+                        (timestamp + resolutionMs) > windowEnd) continue;
+
+                    return {
+                        messageId: id,
+                        // Exclude the entire potentially ambiguous publication
+                        // timestamp bucket from sponsorship. The 45-minute
+                        // deadline remains anchored to the earlier send start.
+                        sponsorStartTs: Math.max(startedAt, timestamp + resolutionMs)
+                    };
+                }
+            } catch (error) {
+                console.warn("[BON Giveaway] Opening reconciliation deferred:", error);
+            }
+            if (attempt < 2) {
+                await new Promise(resolve => setTimeout(resolve, 700));
+            }
+        }
+        return null;
+    }
+
     async function startGiveaway() {
         clearWinnersStatusUI();
 
@@ -10,9 +104,55 @@
             return;
         }
 
+        // Validate in code, not just through the HTML max attribute: DevTools,
+        // presets or scripted property changes cannot start a longer giveaway.
+        const totalTimeMin = parseGiveawayMinutes(timerInput?.value);
+        if (totalTimeMin === null) {
+            window.alert(`DarkPeers giveaways must last between 1 and ${MAX_GIVEAWAY_MINUTES} whole minutes.`);
+            timerInput?.focus();
+            return;
+        }
+
         if (!giveawayForm.checkValidity()) {
             giveawayForm.reportValidity();
             return;
+        }
+
+        // Never overwrite a recoverable opening whose public POST was ambiguous.
+        // The pending snapshot is the only path to reconcile entrants/sponsors
+        // after a reload. A second start could otherwise destroy that evidence.
+        // Pre-lock validation is read-only. Any migration of a legacy key
+        // happens only after exclusive ownership has been acquired.
+        const prior = readActiveGiveawayRawForHost(getLoggedInUsername(), {
+            migrateLegacy: false
+        });
+        // localStorage failures must block starts, never look like absence.
+        if (!prior.readOk || !prior.storageKey) {
+            window.alert("GIVEAWAY START BLOCKED: Cannot read recovery storage reliably. No opening was posted.");
+            return;
+        }
+        if (prior.hasStoredState) {
+            try {
+                const saved = JSON.parse(prior.raw);
+                const proof = saved?.giveawayData?.openingCheckpoint;
+                if (saved?.giveawayData && (!proof || proof.status !== "confirmed" ||
+                    !Number.isFinite(Number(saved.giveawayData.openedAt)) ||
+                    Number(saved.giveawayData.openedAt) <= 0 ||
+                    !Number.isFinite(Number(saved.giveawayData.sponsorStartTs)) ||
+                    Number(saved.giveawayData.sponsorStartTs) <
+                        Number(saved.giveawayData.openedAt))) {
+                    window.alert(
+                        "GIVEAWAY START BLOCKED: A saved opening still requires " +
+                        "verification or manual review. The original recovery " +
+                        "snapshot must not be overwritten by a new giveaway."
+                    );
+                    return;
+                }
+            } catch {
+                // Unknown existing recovery data must not be overwritten.
+                window.alert("GIVEAWAY START BLOCKED: Existing recovery data could not be read safely.");
+                return;
+            }
         }
 
         clearGiveawayLog();
@@ -45,6 +185,26 @@
         // another tab: that is the primary cross-tab double-payout defence.
         if (!await acquireTabLock()) {
             window.alert("Could not acquire exclusive giveaway ownership. Another DarkPeers tab may already be running a giveaway, or this browser does not provide the Web Locks safety API.");
+            return;
+        }
+
+        // The check above ran BEFORE ownership was acquired. Two tabs can
+        // both see empty storage; the second may acquire the lock only after
+        // the first has posted (or checkpointed) an ambiguous opening. Read
+        // storage AGAIN while owning the lock. Any remaining snapshot is
+        // recoverable state and must not be replaced by a second opening.
+        const savedAfterLock = readActiveGiveawayRawForHost(getLoggedInUsername(), {
+            migrateLegacy: true
+        });
+        if (!savedAfterLock.readOk || savedAfterLock.hasStoredState || !savedAfterLock.storageKey) {
+            logEvent("Start blocked (post-lock recovery recheck)",
+                "Saved giveaway state appeared while awaiting the exclusive lock; no new opening was posted.");
+            window.alert(
+                "GIVEAWAY START BLOCKED: A previous giveaway was saved while " +
+                "waiting for this tab's lock. Recover or resolve it before " +
+                "starting another. No new opening has been posted."
+            );
+            releaseTabLock();
             return;
         }
 
@@ -103,8 +263,7 @@
         //startButton.parentElement.hidden = true;
         entriesWrapper.hidden = false;
 
-        let totalTimeMin = totalMinutes();
-        let totalTimeMs = totalTimeMin * 60000;
+        const totalTimeMs = totalTimeMin * 60000;
         let reminderNum = Math.min(Number(remNumInput.value), getReminderLimits(totalTimeMin)[0]);
         if (isNaN(reminderNum) || reminderNum < 0) reminderNum = 0;
         const schedule = getReminderSchedule(totalTimeMin, reminderNum);
@@ -137,6 +296,7 @@
             totalEntries: parseInt(endInput.value, 10) - parseInt(startInput.value, 10) + 1,
             winningNumber: null,
             totalSeconds: totalTimeMs / 1000,
+            openedAt: null,
             timeLeft: totalTimeMs / 1000,
             endTs: Date.now() + (totalTimeMs),
             winnersNum,
@@ -162,6 +322,9 @@
 
         updateRigToggleUI();
         const currentBon = await getVerifiedHostBalance({ requireServer: true, maxAgeMs: 0 });
+        // A pagehide while preflight was awaiting balance invalidates this
+        // document. Don't continue into the public opening workflow.
+        if (!ownsTabLock()) return;
 
         if (currentBon == null) {
             const startErr = "Unable to verify current BON balance.";
@@ -248,6 +411,7 @@
                 giveawayData
             });
             const sponsorBaselineReady = await tracker.bootstrapGiftHistory();
+            if (!ownsTabLock()) return;
             if (!sponsorBaselineReady) {
                 logEvent(
                     "Start aborted (Gift History baseline)",
@@ -261,37 +425,123 @@
                 return;
             }
 
-            const introSent = await sendMessage(introMessage, {
-                requireExclusiveGiveawayOwnership: true
-            });
-            if (introSent === false) {
-                logEvent(
-                    "Start aborted (opening announcement)",
-                    "The public opening message could not be accepted for sending. Timers, entries and sponsor tracking were not started."
-                );
+            // Read a Main Chat cursor BEFORE preparing the durable checkpoint.
+            // UNIT3D may ignore after_id; the verifier also filters by author,
+            // exact prepared message and publication-time window.
+            const afterMessageId = REHEARSAL_MODE
+                ? null : await getLatestChatMessageId(DARKPEERS_MAIN_CHATROOM_ID);
+            if (!ownsTabLock()) return;
+            if (!REHEARSAL_MODE &&
+                (!Number.isSafeInteger(afterMessageId) || afterMessageId <= 0)) {
+                logEvent("Opening blocked (Main Chat cursor)",
+                    "Unable to obtain a trustworthy pre-send Main Chat message ID. No opening was posted.");
                 window.alert(
-                    "GIVEAWAY ERROR: The opening message could not be sent safely to DarkPeers Main Chat. " +
-                    "The giveaway was not started."
+                    "GIVEAWAY ERROR: Cannot verify the latest Main Chat message. " +
+                    "Nothing has been posted. Please try again when DarkPeers is responding."
                 );
                 resetGiveaway();
                 return;
             }
 
-            // Public opening is the temporal boundary. The pre-opening Gift History
-            // snapshot means every subsequently appearing received gift is new.
-            giveawayStartTime = new Date();
-            tracker.giveawayStartTs = giveawayStartTime.getTime();
-            // The advertised duration begins at the same public-opening boundary,
-            // not while balance/history preflight or chat delivery is still running.
-            giveawayData.endTs = giveawayStartTime.getTime() + totalTimeMs;
-            giveawayData.timeLeft = totalTimeMs / 1000;
+            // Deadline: conservative PRE-SEND time. Sponsorship: independently
+            // verified PUBLICATION time (never the earlier request timestamp).
+            const openingSendStartedAt = Date.now();
+            const preparedOpening = prepareOutgoingMessage(introMessage);
+            giveawayStartTime = new Date(openingSendStartedAt);
+            giveawayData.openedAt = openingSendStartedAt;
+            giveawayData.endTs = openingSendStartedAt + totalTimeMs;
+            giveawayData.__sponsorAccountingVerified = false;
+            giveawayData.openingCheckpoint = {
+                status: "pending",
+                startedAt: openingSendStartedAt,
+                afterMessageId,
+                windowEndAt: openingSendStartedAt + OPENING_POST_MAX_PUBLICATION_WINDOW_MS,
+                preparedMessage: preparedOpening
+            };
             window.__activeTracker = tracker;
+            // If this write/read-back fails, DO NOT send anything publicly.
+            if (!snapshotGiveaway({ force: true, verifyWrite: true })) {
+                logEvent("Opening blocked", "Could not persist the opening checkpoint before posting.");
+                window.alert("GIVEAWAY ERROR: Unable to save the opening recovery checkpoint. No message was sent.");
+                resetGiveaway();
+                return;
+            }
 
-            try { await tracker.poll(); } catch (e) { console.error(e); }
-            sponsorsInterval = setInterval(
-                () => tracker.poll(),
-                SPONSOR_GIFT_HISTORY_POLL_MS
-            );
+            const introSent = await sendMessage(preparedOpening, {
+                prepared: true,
+                requireExclusiveGiveawayOwnership: true,
+                noFallbackOnApiException: true
+            });
+            if (!ownsTabLock()) return;
+            // Constrain reconciliation to the ACTUAL time of completion if
+            // this document survived the POST. If it did not, recovery uses
+            // the previously persisted bounded upper limit instead.
+            giveawayData.openingCheckpoint.sendCompletedAt = Date.now();
+            if (!snapshotGiveaway({ force: true, verifyWrite: true })) {
+                logEvent("Opening delivery checkpoint not durable",
+                    "Could not preserve the end of the opening attempt; recovery remains pending.");
+                window.alert("GIVEAWAY OPENING PAUSED: Delivery timing could not be stored. Reload to retry verification.");
+                releaseTabLock();
+                return;
+            }
+
+            // Rehearsal announcements deliberately go to a private host message;
+            // real openings require authoritative Main Chat confirmation.
+            const verifiedOpening = introSent !== false && REHEARSAL_MODE
+                ? { messageId: null, sponsorStartTs: openingSendStartedAt }
+                : await verifyPendingGiveawayOpening(giveawayData.openingCheckpoint);
+
+            if (!verifiedOpening) {
+                logEvent("Opening unconfirmed (checkpoint retained)",
+                    "Main Chat publication could not be verified; payout and sponsor tracking remain disabled until recovery verifies the exact opening.");
+                window.alert(
+                    "GIVEAWAY OPENING UNCONFIRMED: The opening message might already be public. " +
+                    "A recovery checkpoint was saved. Reload Main Chat to retry verification. " +
+                    "Do NOT start another giveaway or send BON manually."
+                );
+                // Keep the snapshot. Never reset or re-send an ambiguous opening.
+                releaseTabLock();
+                return;
+            }
+
+            giveawayData.sponsorStartTs = verifiedOpening.sponsorStartTs;
+            giveawayData.openingCheckpoint.status = "confirmed";
+            giveawayData.openingCheckpoint.messageId = verifiedOpening.messageId;
+            tracker.giveawayStartTs = verifiedOpening.sponsorStartTs;
+            syncGiveawayTimeLeft(giveawayData);
+            if (!snapshotGiveaway({ force: true, verifyWrite: true })) {
+                logEvent("Opening confirmation not durable", "Recovery checkpoint retained; settlement remains blocked.");
+                window.alert("GIVEAWAY OPENING PAUSED: Confirmed opening could not be saved. Reload to recover.");
+                releaseTabLock();
+                return;
+            }
+
+            // The pre-send checkpoint deliberately starts with accounting
+            // disabled. Once publication has been verified, reconcile the
+            // canonical Gift History BEFORE re-enabling pot mutations. Otherwise
+            // !addbon stays blocked forever on a fresh, otherwise healthy start.
+            try {
+                await tracker.reconcileCanonicalSponsorAccounting({ repairStats: false });
+                if (!snapshotGiveaway({ force: true, verifyWrite: true })) {
+                    throw new Error("Opening sponsor reconciliation snapshot did not persist");
+                }
+                setSponsorAccountingVerificationState(
+                    true, "Opening and canonical Gift History sponsor boundary verified."
+                );
+            } catch (error) {
+                setSponsorAccountingVerificationState(
+                    false, "Sponsor reconciliation deferred after public opening: " +
+                    String(error?.message || error)
+                );
+                scheduleSponsorAccountingRecovery(tracker);
+            }
+
+            if (giveawayData.__sponsorAccountingVerified === true) {
+                try { await tracker.poll(); } catch (error) { console.error(error); }
+                sponsorsInterval = setInterval(
+                    () => tracker.poll(), SPONSOR_GIFT_HISTORY_POLL_MS
+                );
+            }
 
             chatReplayIgnoreBeforeTs = null;
             if (observer) {

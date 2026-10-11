@@ -1,0 +1,325 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import vm from "node:vm";
+
+const root = new URL("../", import.meta.url);
+const read = (path) => readFileSync(new URL(path, root), "utf8");
+const prefix = "userscripts/giveaway/src/";
+const utilities = read(prefix + "12-utilities.js");
+const commands = read(prefix + "10-command-handling.js");
+const lifecycle = read(prefix + "06-lifecycle.js");
+const initialization = read(prefix + "05-initialization.js");
+const ui = read(prefix + "04-ui-template.js");
+
+function namedFunction(source, name) {
+  const start = source.indexOf(`    function ${name}(`);
+  assert.notEqual(start, -1, `Missing ${name}`);
+  const closing = source.indexOf("\n    }\n", start);
+  assert.notEqual(closing, -1, `Missing closing brace for ${name}`);
+  return source.slice(start, closing + "\n    }\n".length);
+}
+
+const limitFunctions = [
+  namedFunction(utilities, "parseGiveawayMinutes"),
+  namedFunction(utilities, "getGiveawayMaxEndTs"),
+  namedFunction(commands, "makeStaffAttributedReply"),
+  namedFunction(commands, "hostAdjustTime")
+].join("\n");
+
+function makeHarness(startedAt, initialEndTs, { silentMode = false } = {}) {
+  const replies = [];
+  const publicMessages = [];
+  const privateMessages = [];
+  let schedules = 0;
+  let snapshots = 0;
+  const countdownHeader = { textContent: "" };
+  const runtime = vm.createContext({
+    MAX_GIVEAWAY_MINUTES: 45,
+    GENERAL_SETTINGS: { silent_mode: silentMode },
+    isHostOrAdmin: (author, _fancyName, host) => author === host || author === "staff",
+    isNonHostStaffAction: (author, _fancyName, host) => author === "staff" && author !== host,
+    sanitizeNick: name => name,
+    sendMessage: message => { publicMessages.push(message); return true; },
+    rebuildSchedule: () => { schedules++; },
+    snapshotGiveaway: () => { snapshots++; },
+    parseTime: (ms) => String(ms),
+    countdownHeader
+  });
+  vm.runInContext(limitFunctions, runtime);
+
+  const giveawayData = { host: "maghuro", openedAt: startedAt, endTs: initialEndTs };
+  const adjust = (sign, minutes, author = "maghuro", source = "panel") => {
+    runtime.hostAdjustTime(sign)({
+      author, fancyName: "", args: [String(minutes)], giveawayData, source,
+      reply: (message) => {
+        replies.push(message);
+        if (source === "chat") {
+          if (silentMode) privateMessages.push({ author, message });
+          else publicMessages.push(message);
+        }
+      }
+    });
+  };
+  return {
+    runtime, giveawayData, replies, publicMessages, privateMessages, adjust,
+    get schedules() { return schedules; },
+    get snapshots() { return snapshots; },
+    countdownHeader
+  };
+}
+
+test("only whole durations from 1 through 45 minutes are accepted", () => {
+  const { runtime } = makeHarness(1_000_000, 2_000_000);
+  for (const value of ["1", "12", "45"]) {
+    assert.equal(runtime.parseGiveawayMinutes(value), Number(value));
+  }
+  for (const value of ["", "0", "46", "99", "-1", "45.5", "1e2", "30abc", "Infinity", "999999999999999999999"]) {
+    assert.equal(runtime.parseGiveawayMinutes(value), null, value);
+  }
+  assert.equal(runtime.getGiveawayMaxEndTs(1_000_000), 1_000_000 + 45 * 60_000);
+  assert.equal(runtime.getGiveawayMaxEndTs(null), null);
+  assert.equal(runtime.getGiveawayMaxEndTs("not-a-timestamp"), null);
+});
+
+test("an extension may reach 45 minutes exactly but never cross the opening-based deadline", () => {
+  const startedAt = Date.now() - 10 * 60_000;
+  const h = makeHarness(startedAt, startedAt + 40 * 60_000);
+  h.adjust(1, 5);
+  assert.equal(h.giveawayData.endTs, startedAt + 45 * 60_000);
+  assert.equal(h.snapshots, 1);
+  assert.equal(h.schedules, 1);
+
+  h.adjust(1, 0.01);
+  assert.equal(h.giveawayData.endTs, startedAt + 45 * 60_000);
+  assert.equal(h.snapshots, 1);
+  assert.equal(h.schedules, 1);
+  assert.match(h.replies.at(-1), /maximum of 45 minutes/);
+});
+
+test("the cap concerns total duration, not remaining time", () => {
+  const startedAt = Date.now() - 30 * 60_000;
+  const h = makeHarness(startedAt, startedAt + 40 * 60_000);
+  h.adjust(1, 10); // Only ten minutes are left, but the total would become 50.
+  assert.equal(h.giveawayData.endTs, startedAt + 40 * 60_000);
+  assert.equal(h.snapshots, 0);
+  h.adjust(-1, 1);
+  assert.equal(h.giveawayData.endTs, startedAt + 39 * 60_000);
+  assert.equal(h.snapshots, 1);
+});
+
+test("time adjustment fails closed without a trustworthy public-opening timestamp", () => {
+  const h = makeHarness(null, Date.now() + 10 * 60_000);
+  const original = h.giveawayData.endTs;
+  h.adjust(1, 1);
+  assert.equal(h.giveawayData.endTs, original);
+  assert.equal(h.snapshots, 0);
+  assert.match(h.replies.at(-1), /opening time is unavailable/);
+  h.adjust(1, 1, "another-user");
+  assert.equal(h.replies.length, 1); // Non-hosts cannot change the deadline.
+});
+
+test("UI, start path, both time commands, and recovered snapshots share the hard cap", () => {
+  assert.match(ui, /id="timerNum"[\s\S]*?max="45"/);
+  assert.match(initialization, /Math\.min\(n, MAX_GIVEAWAY_MINUTES\)/);
+  assert.match(initialization, /Math\.min\(minutes, MAX_GIVEAWAY_MINUTES\)/);
+  assert.match(lifecycle, /const totalTimeMin = parseGiveawayMinutes\(timerInput\?\.value\)/);
+  assert.ok(
+    lifecycle.indexOf("const totalTimeMin = parseGiveawayMinutes") <
+    lifecycle.indexOf("await acquireTabLock()")
+  );
+  assert.match(lifecycle, /giveawayData\.openedAt = openingSendStartedAt/);
+  assert.match(commands, /const addMinutes = hostAdjustTime\(\+1\)/);
+  assert.match(commands, /const removeMinutes = hostAdjustTime\(-1\)/);
+  assert.match(commands, /const maxEndTs = getGiveawayMaxEndTs\(giveawayData\.openedAt\)/);
+  assert.match(initialization, /openedAt: giveawayData\.openedAt/);
+  assert.match(initialization, /const correctedDeadline = !committedSettlement && maxEndTs !== null && endTs > maxEndTs/);
+  assert.match(initialization, /snap\.giveawayData\.endTs = maxEndTs/);
+});
+
+test("opening time is durably capped from before the asynchronous chat send", () => {
+  const captured = lifecycle.indexOf("const openingSendStartedAt = Date.now();");
+  const checkpoint = lifecycle.indexOf("openingCheckpoint = {", captured);
+  const persist = lifecycle.indexOf("snapshotGiveaway({ force: true, verifyWrite: true })", checkpoint);
+  const send = lifecycle.indexOf("const introSent = await sendMessage(", persist);
+  const verify = lifecycle.indexOf("await verifyPendingGiveawayOpening(", send);
+  assert.ok(captured >= 0 && checkpoint > captured && persist > checkpoint);
+  assert.ok(send > persist && verify > send);
+  assert.match(lifecycle.slice(captured, send), /giveawayData\.endTs = openingSendStartedAt \+ totalTimeMs/);
+  assert.match(lifecycle.slice(captured, send), /giveawayData\.openedAt = openingSendStartedAt/);
+  assert.match(lifecycle.slice(send, verify), /noFallbackOnApiException: true/);
+});
+
+test("unconfirmed openings are preserved instead of being reset or paid", () => {
+  const start = lifecycle.indexOf("if (!verifiedOpening)");
+  const end = lifecycle.indexOf("giveawayData.sponsorStartTs = verifiedOpening.sponsorStartTs", start);
+  assert.ok(start >= 0 && end > start);
+  const path = lifecycle.slice(start, end);
+  assert.match(path, /releaseTabLock\(\)/);
+  assert.match(path, /return;/);
+  assert.doesNotMatch(path, /resetGiveaway\(\)/);
+  assert.match(path, /opening unconfirmed/i);
+});
+
+test("a rejected !addtime in chat is announced publicly without changing the timer", () => {
+  const openedAt = Date.now() - 5 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000);
+  h.adjust(1, 6, "maghuro", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 40 * 60_000);
+  assert.equal(h.snapshots, 0);
+  assert.equal(h.schedules, 0);
+  assert.equal(h.replies.length, 1, "chat warning uses normal command reply routing");
+  assert.equal(h.publicMessages.length, 1);
+  assert.match(h.publicMessages[0], /Time limit exceeded!/);
+  assert.match(h.publicMessages[0], /45 minutes total/);
+  assert.match(h.publicMessages[0], /No time was added/);
+});
+
+test("staff gets a public, attributed cap warning in chat", () => {
+  const openedAt = Date.now() - 10 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 45 * 60_000);
+  h.adjust(1, 1, "staff", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 45 * 60_000);
+  assert.equal(h.snapshots, 0);
+  assert.equal(h.publicMessages.length, 1);
+  assert.match(h.publicMessages[0], /Staff action by staff/);
+  assert.match(h.publicMessages[0], /Time limit exceeded!/);
+});
+
+test("panel commands keep their previous rejection reply instead of a new chat warning", () => {
+  const openedAt = Date.now() - 5 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000);
+  h.adjust(1, 10, "maghuro", "panel");
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.replies.length, 1);
+  assert.match(h.replies[0], /Time change refused/);
+  assert.doesNotMatch(h.replies[0], /Time limit exceeded!/);
+});
+
+test("allowed chat extensions still change the deadline and use the existing reply path", () => {
+  const openedAt = Date.now() - 5 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000);
+  h.adjust(1, 5, "maghuro", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 45 * 60_000);
+  assert.equal(h.snapshots, 1);
+  assert.equal(h.publicMessages.length, 1);
+  assert.equal(h.replies.length, 1);
+  assert.match(h.replies[0], /Added/);
+});
+
+test("unprivileged users cannot trigger public cap notices or mutate the giveaway", () => {
+  const openedAt = Date.now() - 5 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000);
+  h.adjust(1, 10, "random-user", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 40 * 60_000);
+  assert.equal(h.snapshots, 0);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.replies.length, 0);
+});
+
+test("both chat aliases use the public over-limit rejection path", () => {
+  assert.match(commands, /addtime:\s*hostAdjustTime\(\+1\)/);
+  assert.match(commands, /const addMinutes = hostAdjustTime\(\+1\)/);
+  assert.match(commands, /if \(action === "add"\)\s*\{\s*addMinutes\(ctxWithArg\)/);
+  assert.match(commands, /source:\s*"chat"/);
+  assert.match(commands, /if \(ctx\.source === "chat"\)/);
+  assert.match(commands, /GENERAL_SETTINGS\.silent_mode/);
+});
+
+test("Rehearsal Mode delivers the same 45-minute warning privately, without a public chat send", async () => {
+  const openedAt = Date.now() - 5 * 60_000;
+  const data = { host: "maghuro", openedAt, endTs: openedAt + 40 * 60_000 };
+  const privateMessages = [];
+  let changed = 0;
+  const context = vm.createContext({
+    MAX_GIVEAWAY_MINUTES: 45,
+    REHEARSAL_MODE: true,
+    GENERAL_SETTINGS: { silent_mode: true },
+    DEBUG_SETTINGS: { disable_chat_output: false, verify_sendmessage: false, log_chat_messages: false },
+    giveawayData: data,
+    getLoggedInUsername: () => "maghuro",
+    sanitizeNick: name => name,
+    logEvent() {},
+    prepareOutgoingMessage: text => text,
+    formatRehearsalPrivateOutput: text => "[REHEARSAL] " + text,
+    sendPrivateMessage: (user, text) => {
+      privateMessages.push({ user, text });
+      return Promise.resolve(true);
+    },
+    isHostOrAdmin: (user, _, host) => user === host,
+    isNonHostStaffAction: () => false,
+    rebuildSchedule: () => { changed++; },
+    snapshotGiveaway: () => { changed++; }
+  });
+  vm.runInContext([
+    namedFunction(utilities, "getGiveawayMaxEndTs"),
+    (() => {
+      const start = utilities.indexOf("    async function sendMessage(");
+      assert.ok(start !== -1, "Missing async sendMessage");
+      const marker = "\n    }\n";
+      const end = utilities.indexOf(marker, start);
+      assert.ok(end > start, "Missing end of sendMessage");
+      return utilities.slice(start, end + marker.length);
+    })(),
+    namedFunction(commands, "makeStaffAttributedReply"),
+    namedFunction(commands, "hostAdjustTime")
+  ].join("\n"), context);
+
+  // Command originates from chat, but rehearsal mode redirects outgoing
+  // script-generated chat output to the host's private inbox.
+  context.hostAdjustTime(+1)({
+    author: "maghuro", fancyName: "", giveawayData: data,
+    source: "chat", args: ["10"], reply: message => context.sendMessage(message)
+  });
+  await Promise.resolve();
+  assert.equal(data.endTs, openedAt + 40 * 60_000);
+  assert.equal(changed, 0);
+  assert.equal(privateMessages.length, 1);
+  assert.equal(privateMessages[0].user, "maghuro");
+  assert.match(privateMessages[0].text, /\[REHEARSAL\]/);
+  assert.match(privateMessages[0].text, /Time limit exceeded!/);
+  assert.match(privateMessages[0].text, /45 minutes total/);
+  assert.match(privateMessages[0].text, /No time was added/);
+});
+
+test("host over-limit feedback follows Silent Mode and is private to the invoker", () => {
+  const openedAt = Date.now() - 10 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000, { silentMode: true });
+  h.adjust(1, 10, "maghuro", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 40 * 60_000);
+  assert.equal(h.snapshots, 0);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.privateMessages.length, 1);
+  assert.equal(h.privateMessages[0].author, "maghuro");
+  assert.match(h.privateMessages[0].message, /Time limit exceeded!/);
+  assert.match(h.privateMessages[0].message, /No time was added/);
+});
+
+test("staff over-limit feedback is also private in Silent Mode", () => {
+  const openedAt = Date.now() - 10 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 45 * 60_000, { silentMode: true });
+  h.adjust(1, 1, "staff", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 45 * 60_000);
+  assert.equal(h.snapshots, 0);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.privateMessages.length, 1);
+  assert.equal(h.privateMessages[0].author, "staff");
+  assert.match(h.privateMessages[0].message, /Time limit exceeded!/);
+});
+
+test("staff success and validation messages remain private in Silent Mode", () => {
+  const openedAt = Date.now() - 10 * 60_000;
+  const h = makeHarness(openedAt, openedAt + 40 * 60_000, { silentMode: true });
+  h.adjust(1, 5, "staff", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 45 * 60_000);
+  assert.equal(h.snapshots, 1);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.privateMessages.length, 1);
+  assert.match(h.privateMessages[0].message, /Added/);
+
+  h.adjust(1, "bad", "staff", "chat");
+  assert.equal(h.giveawayData.endTs, openedAt + 45 * 60_000);
+  assert.equal(h.publicMessages.length, 0);
+  assert.equal(h.privateMessages.length, 2);
+  assert.match(h.privateMessages[1].message, /Usage:/);
+});

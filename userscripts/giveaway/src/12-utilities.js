@@ -687,7 +687,11 @@
               `✨[b][color=#FB4F4F]Gift the host to add to the pot! [color=${GIFT_HINT_COLOR}]/gift ${getGiftSyntaxHostName()} AMOUNT MESSAGE[/color][/color][/b]✨` +
               silentLine +
               rigLine;
-        sendMessage(msg);
+        // Both scheduled reminders and explicit !reminder requests are
+        // announcements to ALL entrants, not replies to the host command.
+        // Silent Mode must not make the requested reminder invisible.
+        // Rehearsal Mode still redirects sendMessage() to the host's PM.
+        return sendMessage(msg);
     }
 
     // ───────────── HTTP-based BON gifting helper ─────────────
@@ -1619,11 +1623,11 @@
         return sendMessage(`/msg ${to} ${body}`, options);
     }
 
-    async function sendCommandResponse(username, messageStr) {
+    async function sendCommandResponse(username, messageStr, options = {}) {
         if (GENERAL_SETTINGS.silent_mode) {
-            return sendPrivateMessage(username, messageStr);
+            return sendPrivateMessage(username, messageStr, options);
         }
-        return sendMessage(messageStr);
+        return sendMessage(messageStr, options);
     }
 
     /** Prepare a message for sending: obfuscate "giveaway" and apply number formatting. */
@@ -1750,11 +1754,30 @@
         if (!forceChatboxOnly && !DEBUG_SETTINGS.suppressApiMessages) {
             try {
                 if (await trySendViaApi(messageStr)) return true;
+                // A 5xx/non-OK API response might still follow a committed
+                // public POST. An opening must NEVER post again via chatbox:
+                // the durable checkpoint is the only safe recovery path.
+                if (options?.noFallbackOnApiException === true) return false;
             } catch (e) {
+                // An opening POST may already have committed before its reply
+                // timed out. Never issue a second, chatbox-based announcement
+                // during that uncertainty; the persisted opening checkpoint
+                // must be reconciled from authoritative Main Chat first.
+                if (options?.noFallbackOnApiException === true) {
+                    if (DEBUG_SETTINGS.log_chat_messages) {
+                        console.warn("Opening API result ambiguous; leaving checkpoint for verification:", e);
+                    }
+                    return false;
+                }
                 if (DEBUG_SETTINGS.log_chat_messages) console.warn("API send failed, falling back to chatbox method:", e);
                 if (DEBUG_SETTINGS.verify_sendmessage) console.debug("sendMessage: API send failed, falling back to chatbox method");
             }
         }
+
+        // Opening output is single-shot. Even when the API was deliberately
+        // disabled, missing credentials, or returned non-OK, never silently
+        // publish a second opening through chatbox.
+        if (options?.noFallbackOnApiException === true) return false;
 
         // Settlement output is authoritative. If the API attempt yielded while a
         // BFCache/pagehide handoff quarantined this document, never let the stale
@@ -2624,9 +2647,22 @@
     }
 
 
+    function parseGiveawayMinutes(value) {
+        const raw = String(value ?? "").trim();
+        if (!/^\d+$/.test(raw)) return null;
+        const minutes = Number(raw);
+        return Number.isSafeInteger(minutes) && minutes >= 1 && minutes <= MAX_GIVEAWAY_MINUTES
+            ? minutes : null;
+    }
+
+    function getGiveawayMaxEndTs(startTime) {
+        const startedAt = Number(startTime);
+        return Number.isFinite(startedAt) && startedAt > 0
+            ? startedAt + MAX_GIVEAWAY_MINUTES * 60_000 : null;
+    }
+
     function totalMinutes () {
-        const t = parseInt(String(timerInput?.value ?? ""), 10);
-        return (Number.isFinite(t) && t > 0) ? t : 0;
+        return parseGiveawayMinutes(timerInput?.value) ?? 0;
     }
 
     function nextReminderMs(schedule, msLeft) {

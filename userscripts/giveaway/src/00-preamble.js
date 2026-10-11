@@ -2,7 +2,7 @@
 // @name         DarkPeers BONanza Giveaway | Maghuro Fork
 // @namespace    https://darkpeers.org/users/maghuro
 // @description  BON giveaways on DarkPeers with an optional direct contribution to the BON Pool
-// @version      1.5.14
+// @version      1.5.15
 // @author       🤖 T.R.A.V.I.S., Maghuro & M.A.E.S.T.R.O.
 // @homepageURL  https://darkpeers.org/users/maghuro
 // @updateURL    https://gist.githubusercontent.com/maghuro/da2dbfec94951990cbc54e75a9aee318/raw/DarkPeers_BONanza_Giveaway.meta.js
@@ -244,6 +244,37 @@
 //     fallback now preserves exclusive ownership, uses the chatbox-only slash-command
 //     path so an ambiguous chat-API timeout can never be mistaken for a definite
 //     no-send, and restores only the exact unsent terminal marker after durable read-back.
+//   - v1.5.15 enforces DarkPeers' 45-minute maximum from public opening across
+//     the form, presets, host/staff time commands and restored active snapshots.
+//     Rejected !addtime / !time add attempts explain the 45-minute total
+//     limit without changing the deadline. Silent Mode sends all host/staff
+//     command replies privately, but explicit !reminder requests still post
+//     publicly just like automatic reminders. Rehearsal routes both to host PMs.
+//     Opening delivery is checkpointed before the POST and verified against
+//     Main Chat; a timeout preserves recovery rather than resetting. Sponsor
+//     eligibility begins after the verified publication timestamp bucket,
+//     separately from the conservative 45-minute pre-send deadline. Live
+//     openings require a valid Main Chat cursor before any public POST.
+//     Only exact announcements whose complete server timestamp bucket lies
+//     within a persisted, bounded opening attempt can confirm publication;
+//     later repeated or overlapping same-second announcements are rejected.
+//     Gift History timestamps also must start no earlier than the verified
+//     sponsor opening boundary; HTTP error/5xx opening POSTs must never
+//     trigger a second announcement via chatbox fallback.
+//     A second tab must recheck saved recovery AFTER acquiring its Web Lock.
+//     Confirmed LIVE openings are authoritatively rechecked on every restore.
+//     When Gift History calibration is unavailable, ALL ambiguous gift rows
+//     remain uncounted/retryable until reliable calibration succeeds.
+//     Legacy snapshots without verified opening evidence are retained only
+//     for manual recovery (no automatic 45-minute rewrite or BON payout).
+//     Coarse Gift History calibration uncertainty is tracked, saved across
+//     reloads, and subtracted before sponsor-start eligibility checks.
+//     Recovery storage read failures block new giveaways even when raw data
+//     appears absent; even empty-but-present recovery keys are occupied.
+//     Before the exclusive Web Lock, reading must not migrate legacy keys.
+//     Preflight before the persisted opening checkpoint is
+//     NEVER snapshotted, including on BFCache/pagehide. Corrupt recovery
+//     snapshots are preserved rather than silently deleted.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
