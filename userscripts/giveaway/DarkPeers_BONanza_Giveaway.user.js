@@ -2973,6 +2973,20 @@ body.host-panel-dragging * {
                         migratedLegacy: false, readOk: false
                     };
                 }
+                if (migrateLegacy) {
+                    // Both records were byte-identical. Under the exclusive
+                    // restore lock, retire the redundant old copy BEFORE
+                    // a pending -> confirmed write can make it conflict.
+                    // Verify BOTH values are unchanged before deletion.
+                    if (localStorage.getItem(storageKey) !== namespacedRaw ||
+                        localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== legacyRaw) {
+                        throw new Error("Duplicate recovery state changed before cleanup");
+                    }
+                    localStorage.removeItem(LS_ACTIVE_GIVEAWAY_LEGACY);
+                    if (localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== null) {
+                        throw new Error("Duplicate legacy recovery cleanup not confirmed");
+                    }
+                }
                 return namespacedResult;
             }
 

@@ -97,8 +97,12 @@ multiple userscripts, not just BONanza.
   ALWAYS inspect the old legacy slot even when namespaced recovery exists.
   Corrupt, unidentified or different SAME-HOST snapshots must block automatic
   recovery/settlement; identical same-host records are safe to read, as is
-  a positively identified different host. Never delete a legacy record until
-  an exclusive-lock migration has been written and read back successfully.
+  a positively identified different host. On post-lock recovery, first
+  verify byte-identical same-host snapshots, then retire their duplicate
+  legacy slot with before/after read-back checks BEFORE writing a new
+  confirmed opening checkpoint. If cleanup fails, abort without payout;
+  pre-lock discovery must remain read-only. Never delete a legacy record
+  until its namespaced copy has been verified durably.
   `loadGiveawaySnapshot()` must never
   delete, migrate, or alter recovery storage before acquiring the Web Lock;
   stale/expired data needs manual review, not speculative cleanup.

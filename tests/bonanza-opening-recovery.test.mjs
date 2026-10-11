@@ -640,6 +640,7 @@ test("unverified history keys remain retryable across polling and block canonica
 
 function recoveryReadHarness({ namespaced = null, legacy = null, throwsOn = "" } = {}) {
   const storage = new Map();
+  const readCounts = new Map();
   if (namespaced !== null) storage.set("recovery::maghuro", namespaced);
   if (legacy !== null) storage.set("recovery", legacy);
   const events = [];
@@ -653,6 +654,9 @@ function recoveryReadHarness({ namespaced = null, legacy = null, throwsOn = "" }
     localStorage: {
       getItem: key => {
         if (throwsOn === "read") throw Error("read denied");
+        const count = (readCounts.get(key) || 0) + 1;
+        readCounts.set(key, count);
+        if (throwsOn === "verify" && key === "recovery::maghuro" && count > 1) throw Error("read-back denied");
         return storage.has(key) ? storage.get(key) : null;
       },
       setItem: (key, value) => {
@@ -662,7 +666,7 @@ function recoveryReadHarness({ namespaced = null, legacy = null, throwsOn = "" }
       },
       removeItem: key => {
         if (throwsOn === "remove") throw Error("remove denied");
-        storage.delete(key);
+        if (throwsOn !== "remove-noop") storage.delete(key);
       }
     },
     console: { warn() {} }
@@ -670,7 +674,7 @@ function recoveryReadHarness({ namespaced = null, legacy = null, throwsOn = "" }
   vm.runInContext([
     extract(initialization, "function readActiveGiveawayRawForHost(")
   ].join("\n"), ctx);
-  return { read: (...args) => ctx.readActiveGiveawayRawForHost(...args), events };
+  return { read: (...args) => ctx.readActiveGiveawayRawForHost(...args), events, storage };
 }
 
 test("recovery storage access failures never masquerade as empty storage", () => {
@@ -879,17 +883,55 @@ test("coexisting namespaced recovery rejects corrupt and inconsistent legacy evi
   }
 });
 
-test("byte-identical same-host recovery copies are accepted without mutation", () => {
-  const identical = JSON.stringify({ giveawayData: { host: "maghuro" }, entries: [7, 8] });
-  for (const migrateLegacy of [false, true]) {
-    const h = recoveryReadHarness({ namespaced: identical, legacy: identical });
-    const state = h.read("maghuro", { migrateLegacy });
-    assert.equal(state.readOk, true);
+test("duplicate same-host recovery remains read-only until exclusive-locked migration", () => {
+  const identical = JSON.stringify({ giveawayData: { host: "maghuro", openingCheckpoint: { status: "pending" } } });
+  const h = recoveryReadHarness({ namespaced: identical, legacy: identical });
+  const pre = h.read("maghuro", { migrateLegacy: false });
+  assert.equal(pre.readOk, true);
+  assert.equal(pre.raw, identical);
+  assert.equal(h.storage.get("recovery"), identical);
+  assert.deepEqual(h.events, [], "Pre-lock discovery cannot modify legacy recovery");
+
+  const locked = h.read("maghuro", { migrateLegacy: true });
+  assert.equal(locked.readOk, true);
+  assert.equal(locked.raw, identical);
+  assert.equal(locked.migratedLegacy, false);
+  assert.equal(h.storage.get("recovery::maghuro"), identical);
+  assert.equal(h.storage.has("recovery"), false, "Retire redundant legacy before confirming the opening");
+
+  // An immediate crash after the pending-to-confirmed checkpoint update
+  // must not strand recovery against a stale pending legacy slot.
+  const confirmed = JSON.stringify({ giveawayData: { host: "maghuro", openingCheckpoint: { status: "confirmed" } } });
+  h.storage.set("recovery::maghuro", confirmed);
+  const restarted = h.read("maghuro", { migrateLegacy: false });
+  assert.equal(restarted.readOk, true);
+  assert.equal(restarted.raw, confirmed);
+  assert.equal(restarted.hasStoredState, true);
+});
+
+test("duplicate cleanup failures fail closed without overwriting verified recovery", () => {
+  const identical = JSON.stringify({ giveawayData: { host: "maghuro" } });
+  for (const throwsOn of ["remove", "verify", "remove-noop"]) {
+    const h = recoveryReadHarness({ namespaced: identical, legacy: identical, throwsOn });
+    const state = h.read("maghuro", { migrateLegacy: true });
+    assert.equal(state.readOk, false, `Cleanup must fail closed: ${throwsOn}`);
     assert.equal(state.hasStoredState, true);
-    assert.equal(state.raw, identical);
-    assert.equal(state.migratedLegacy, false);
-    assert.deepEqual(h.events, []);
+    assert.equal(h.storage.get("recovery::maghuro"), identical);
+    assert.equal(h.storage.get("recovery"), identical);
   }
+});
+
+test("duplicate cleanup precedes recovered pending-opening confirmation", () => {
+  const reader = initialization.slice(
+    initialization.indexOf("function readActiveGiveawayRawForHost("),
+    initialization.indexOf("/** Read and validate the shared cross-tab lock.")
+  );
+  assert.match(reader, /if \(migrateLegacy\) \{/);
+  assert.match(reader, /Duplicate legacy recovery cleanup not confirmed/);
+  const restoreStart = initialization.indexOf("async function restoreGiveawayFromSnapshot(");
+  const lockedRead = initialization.indexOf("const lockedRead = readActiveGiveawayRawForHost(", restoreStart);
+  const update = initialization.indexOf("localStorage.setItem(storageKey, verifiedRaw)", lockedRead);
+  assert.ok(update > lockedRead, "Cleanup is required during locked read before the confirmed checkpoint write");
 });
 
 test("positively foreign legacy evidence does not mask valid namespaced recovery", () => {

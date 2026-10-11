@@ -76,9 +76,13 @@ is likewise occupied and unidentified: block new live openings, retain the
 original bytes, and require manual review. A known DIFFERENT host may be ignored.
 Even with an existing namespaced snapshot, always inspect the legacy slot:
 block any malformed/unidentified record or inconsistent same-host settlement
-state (only byte-identical duplicates are safe). Keep both records for manual
-investigation rather than trusting an older payout ledger. Migrations require
-an exclusive lock and successful read-back before removing legacy storage.
+state (only byte-identical duplicates are safe). Keep conflicting records
+for manual investigation rather than trusting an older payout ledger.
+After acquiring the exclusive lock, verify and retire a redundant identical
+legacy slot BEFORE changing the namespaced opening checkpoint, with before-
+and after-deletion read-back checks. Otherwise a crash could strand recovery.
+A cleanup failure blocks automatic restoration. Single-slot migrations also
+require verified writes before removing legacy storage.
 The initial snapshot loader must not clear even expired state: preserve it
 for manual review instead of altering shared recovery before locking.
 Snapshots are forbidden during balance/history/cursor preflight, before a
