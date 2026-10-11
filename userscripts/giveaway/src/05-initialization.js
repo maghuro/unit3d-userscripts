@@ -1154,7 +1154,17 @@
                 if (localStorage.getItem(storageKey) !== legacyRaw) {
                     throw new Error("Legacy migration read-back mismatch");
                 }
+                // A successful write alone is not a completed migration.
+                // Confirm the legacy key really disappeared BEFORE any
+                // checkpoint mutation can diverge the two same-host copies.
+                // If removal is denied or silently ignored, fail closed.
+                if (localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== legacyRaw) {
+                    throw new Error("Legacy recovery changed before removal");
+                }
                 localStorage.removeItem(LS_ACTIVE_GIVEAWAY_LEGACY);
+                if (localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== null) {
+                    throw new Error("Single-slot legacy migration cleanup not confirmed");
+                }
             }
             return {
                 storageKey, raw: legacyRaw, hasStoredState: true,

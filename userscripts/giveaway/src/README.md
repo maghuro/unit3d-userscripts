@@ -82,7 +82,9 @@ After acquiring the exclusive lock, verify and retire a redundant identical
 legacy slot BEFORE changing the namespaced opening checkpoint, with before-
 and after-deletion read-back checks. Otherwise a crash could strand recovery.
 A cleanup failure blocks automatic restoration. Single-slot migrations also
-require verified writes before removing legacy storage.
+require verified namespaced writes, an unchanged legacy source, and a
+confirmed legacy deletion before returning success. Denied or silent
+removeItem failures block restore before opening confirmation.
 The initial snapshot loader must not clear even expired state: preserve it
 for manual review instead of altering shared recovery before locking.
 Snapshots are forbidden during balance/history/cursor preflight, before a

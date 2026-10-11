@@ -883,6 +883,58 @@ test("coexisting namespaced recovery rejects corrupt and inconsistent legacy evi
   }
 });
 
+test("single legacy slot migration verifies cleanup and survives an immediate post-confirmation reload", () => {
+  const pending = JSON.stringify({
+    giveawayData: { host: "maghuro", openingCheckpoint: { status: "pending" } }
+  });
+  const h = recoveryReadHarness({ legacy: pending });
+  const discovery = h.read("maghuro", { migrateLegacy: false });
+  assert.equal(discovery.readOk, true);
+  assert.equal(discovery.raw, pending);
+  assert.equal(h.storage.has("recovery::maghuro"), false, "Discovery cannot migrate");
+  assert.equal(h.storage.get("recovery"), pending, "Discovery cannot delete");
+
+  const migrated = h.read("maghuro", { migrateLegacy: true });
+  assert.equal(migrated.readOk, true);
+  assert.equal(migrated.migratedLegacy, true);
+  assert.equal(migrated.raw, pending);
+  assert.equal(h.storage.get("recovery::maghuro"), pending, "Namespaced checkpoint must survive");
+  assert.equal(h.storage.has("recovery"), false, "Migration must remove the old key");
+
+  // An interrupted restore after writing the confirmed opening has no
+  // leftover legacy record against which to conflict on the next load.
+  const confirmed = JSON.stringify({
+    giveawayData: { host: "maghuro", openingCheckpoint: { status: "confirmed" } }
+  });
+  h.storage.set("recovery::maghuro", confirmed);
+  const restarted = h.read("maghuro", { migrateLegacy: false });
+  assert.equal(restarted.readOk, true);
+  assert.equal(restarted.raw, confirmed);
+});
+
+test("single legacy slot migration fails closed on denied or silent removal", () => {
+  const pending = JSON.stringify({
+    giveawayData: { host: "maghuro", openingCheckpoint: { status: "pending" } }
+  });
+  for (const failure of ["remove", "remove-noop"]) {
+    const h = recoveryReadHarness({ legacy: pending, throwsOn: failure });
+    const result = h.read("maghuro", { migrateLegacy: true });
+    assert.equal(result.readOk, false, `Restore must abort when legacy deletion fails: ${failure}`);
+    assert.equal(result.hasStoredState, true);
+    assert.equal(result.migratedLegacy, false);
+    assert.equal(h.storage.get("recovery"), pending, "Preserve legacy evidence");
+    assert.equal(h.storage.get("recovery::maghuro"), pending, "Preserve migrated checkpoint");
+    assert.equal(h.storage.has("recovery"), true, "Do not advance confirmation while old slot remains");
+
+    // A subsequent successful migration can retire these two identical
+    // copies instead of losing the original pending ledger state.
+    const retry = recoveryReadHarness({ namespaced: pending, legacy: pending });
+    const recovered = retry.read("maghuro", { migrateLegacy: true });
+    assert.equal(recovered.readOk, true);
+    assert.equal(retry.storage.has("recovery"), false);
+  }
+});
+
 test("duplicate same-host recovery remains read-only until exclusive-locked migration", () => {
   const identical = JSON.stringify({ giveawayData: { host: "maghuro", openingCheckpoint: { status: "pending" } } });
   const h = recoveryReadHarness({ namespaced: identical, legacy: identical });

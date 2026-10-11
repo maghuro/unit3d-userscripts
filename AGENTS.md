@@ -101,8 +101,12 @@ multiple userscripts, not just BONanza.
   verify byte-identical same-host snapshots, then retire their duplicate
   legacy slot with before/after read-back checks BEFORE writing a new
   confirmed opening checkpoint. If cleanup fails, abort without payout;
-  pre-lock discovery must remain read-only. Never delete a legacy record
-  until its namespaced copy has been verified durably.
+  pre-lock discovery must remain read-only. Also verify legacy removal
+  succeeded after migrating a single old-format record: a successful
+  namespaced write does not prove the old key was deleted. Abort restore
+  if deletion is denied or silently ignored, before a pending opening
+  is confirmed. Never delete a legacy record until its namespaced copy
+  has been verified durably.
   `loadGiveawaySnapshot()` must never
   delete, migrate, or alter recovery storage before acquiring the Web Lock;
   stale/expired data needs manual review, not speculative cleanup.
