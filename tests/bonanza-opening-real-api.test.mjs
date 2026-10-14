@@ -204,3 +204,30 @@ test("the history-expiry restore path retains the original sponsor boundary and 
   assert.match(init,/Number\(restoredCheckpoint\.sendCompletedAt\) \+ 1000/);
   assert.match(init,/verified\.sponsorStartTs !== savedSponsorStart/);
 });
+
+test("a matching duplicate AFTER the opening POST window disqualifies a seemingly unique in-window announcement", async () => {
+  const duplicate = real(629181, {
+    created_at: "2026-10-14T20:25:40+00:00"
+  });
+  assert.equal(await verify([real(629180), duplicate]), null);
+});
+
+test("a matching duplicate BEFORE the attempt but after its message cursor also disqualifies opening", async () => {
+  const earlier = real(629177, {
+    created_at: "2026-10-14T20:25:23+00:00"
+  });
+  assert.equal(await verify([earlier, real(629180)]), null);
+});
+
+test("a duplicated row with the SAME message ID does not count as two announcements", async () => {
+  const record = real(629180);
+  const result = await verify([record, {...record}]);
+  assert.equal(result.messageId, 629180);
+});
+
+test("timestamp-invalid duplicate with the same proof also blocks ambiguous opening", async () => {
+  assert.equal(await verify([
+    real(629180),
+    real(629181, {created_at: "unknown"})
+  ]), null);
+});
