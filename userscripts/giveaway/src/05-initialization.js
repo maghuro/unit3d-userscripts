@@ -1762,6 +1762,100 @@
         sponsorRecoveryInterval = setInterval(retry, SPONSOR_GIFT_HISTORY_POLL_MS);
     }
 
+    // An unconfirmed opening must never trap the host in repeated modal alerts.
+    // Expose an explicit, guarded archive/cancel action instead. A cancelled
+    // opening is never settled automatically, and sponsors must be checked by
+    // the host against authenticated Gift History.
+    function showUnverifiedOpeningControls(savedSnapshot) {
+        const checkpoint = savedSnapshot?.giveawayData?.openingCheckpoint;
+        if (!checkpoint || document.getElementById("bonanzaOpeningRecoveryControls")) return;
+
+        const node = document.createElement("aside");
+        node.id = "bonanzaOpeningRecoveryControls";
+        node.setAttribute("role", "status");
+        Object.assign(node.style, {
+            position: "fixed", top: "76px", right: "16px",
+            maxWidth: "390px", zIndex: "2147483646",
+            background: "#1c2730", color: "#fff",
+            padding: "14px", border: "2px solid #ffbd52",
+            borderRadius: "9px", boxShadow: "0 3px 18px #0008"
+        });
+        const msg = document.createElement("p");
+        msg.textContent = "BONanza opening unverified. No entries, settlement or BON transfers will resume. Check the public chat and Gift History before cancelling.";
+        node.appendChild(msg);
+
+        if (checkpoint.status === "pending") {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = "Cancel & archive pending giveaway";
+            button.style.cssText = "padding:8px;cursor:pointer;border-radius:5px;";
+            button.addEventListener("click", async () => {
+                if (!window.confirm(
+                    "Cancel this pending opening? This only archives local recovery state. " +
+                    "It does NOT remove the public announcement or refund sponsor gifts."
+                )) return;
+                if (!await acquireTabLock()) {
+                    window.alert("Cannot cancel while another tab owns the giveaway. Close other DarkPeers tabs.");
+                    return;
+                }
+
+                let cancelled = false;
+                try {
+                    const host = getLoggedInUsername();
+                    const current = readActiveGiveawayRawForHost(host, { migrateLegacy: true });
+                    if (!ownsTabLock() || !current.readOk || !current.hasStoredState ||
+                        !current.raw || !current.storageKey) {
+                        throw new Error("Saved recovery state is missing or cannot be read safely.");
+                    }
+                    const saved = JSON.parse(current.raw);
+                    const data = saved?.giveawayData;
+                    const proof = data?.openingCheckpoint;
+                    if (!data || normalizeUserKey(data.host) !== normalizeUserKey(host) ||
+                        (data.rehearsalMode === true) !== REHEARSAL_MODE ||
+                        proof?.status !== "pending" ||
+                        Number(proof.startedAt) !== Number(checkpoint.startedAt)) {
+                        throw new Error("Saved recovery state has changed; cancellation stopped.");
+                    }
+                    if (data.settlement || data.closingIntent || data.closingNoticeSent ||
+                        data.closingNoticeProgress) {
+                        throw new Error("Settlement evidence exists. Manual audit is required.");
+                    }
+
+                    const archiveKey = [
+                        "bonanza-giveaway-cancelled", location.hostname,
+                        encodeURIComponent(normalizeUserKey(host)),
+                        String(proof.startedAt)
+                    ].join("::");
+                    const existing = localStorage.getItem(archiveKey);
+                    if (existing !== null && existing !== current.raw) {
+                        throw new Error("A different archive already exists for this opening.");
+                    }
+                    if (existing === null) localStorage.setItem(archiveKey, current.raw);
+                    if (localStorage.getItem(archiveKey) !== current.raw) {
+                        throw new Error("Archive write verification failed. Active state retained.");
+                    }
+                    if (localStorage.getItem(current.storageKey) !== current.raw) {
+                        throw new Error("Active state changed before cancellation. No deletion performed.");
+                    }
+                    localStorage.removeItem(current.storageKey);
+                    if (localStorage.getItem(current.storageKey) !== null) {
+                        throw new Error("Active snapshot deletion failed.");
+                    }
+                    cancelled = true;
+                    console.info("[BON Giveaway] Pending opening archived (not settled):", archiveKey);
+                } catch (error) {
+                    console.error("[BON Giveaway] Pending cancellation deferred:", error);
+                    window.alert("Cancellation not completed: " + String(error?.message || error));
+                } finally {
+                    releaseTabLock();
+                }
+                if (cancelled) window.location.reload();
+            });
+            node.appendChild(button);
+        }
+        document.body.appendChild(node);
+    }
+
     async function restoreGiveawayFromSnapshot(snap) {
         // The earlier snapshot is only a discovery hint. Another tab may
         // persist a newer settlement while we await the Web Lock. Classify
@@ -1888,10 +1982,7 @@
                 if (!verified) {
                     logEvent("Opening recovery deferred",
                         "Main Chat could not prove the uncertain opening; existing checkpoint preserved.");
-                    window.alert(
-                        "GIVEAWAY RECOVERY PAUSED: The public opening could not be verified. " +
-                        "No giveaway settlement or BON transfer will run. Retry from Main Chat later."
-                    );
+                    showUnverifiedOpeningControls(snap);
                     releaseTabLock();
                     return false;
                 }
@@ -1902,11 +1993,7 @@
                 if (overdue > EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS) {
                     logEvent("Opening recovery requires manual review",
                         "Opening verified but its automatic settlement grace has expired.");
-                    window.alert(
-                        "GIVEAWAY RECOVERY PAUSED: An old public opening was verified, " +
-                        "but automatic settlement is unsafe after the recovery grace. " +
-                        "Keep the saved recovery state for manual review."
-                    );
+                    showUnverifiedOpeningControls(snap);
                     releaseTabLock();
                     return false;
                 }
