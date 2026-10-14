@@ -21,8 +21,8 @@
 // DarkPeers-only fork of "Blutopia BON Giveaway" v6.2.2 by Nums (GPL-3.0-or-later).
 // Changes in this fork:
 //   - v1.5.16 reconciles real DarkPeers HTML/JoyPixels and second-resolution
-//     timestamps after acknowledged opening POSTs. Ambiguous/duplicate
-//     announcements remain blocked; sponsor boundary stays conservative.
+//     timestamps using per-opening 128-bit invisible proof markers. Ambiguous
+//     announcements stay blocked; failed openings offer guarded archive/cancel.
 //   - All non-DarkPeers tracker support, the upload.cx extra commands and the
 //     openuserjs update check have been removed.
 //   - A host-selected percentage (0-50%, steps of 5) of the final pot is
