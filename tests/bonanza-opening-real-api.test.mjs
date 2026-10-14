@@ -158,3 +158,49 @@ test("unsupported custom BBCode is rejected before public POST", () => {
   assert.match(guard, /Custom message contains unsupported BBCode\/HTML/);
   assert.match(guard, /return;/);
 });
+
+const latest100 = Array.from({length:100}, (_, i) => ({
+  id: 629181 + i,
+  user: {id:11,username:"participant"},
+  message:"unrelated chat",
+  created_at:"2026-10-14T20:26:30+00:00"
+}));
+
+test("a proven confirmed opening survives when the recent 100 chat messages have advanced past its ID", async () => {
+  const r = await verify(latest100, {status:"confirmed",checkpoint:{messageId:629180}});
+  assert.equal(r.messageId,629180);
+  assert.equal(r.historyEvicted,true);
+});
+
+test("pending openings are NOT confirmed merely because history advanced", async () => {
+  assert.equal(await verify(latest100,{checkpoint:{messageId:629180}}),null);
+});
+
+test("incomplete chat history is insufficient to bypass publication proof", async () => {
+  assert.equal(await verify(latest100.slice(0,99), {
+    status:"confirmed",checkpoint:{messageId:629180}
+  }),null);
+});
+
+test("a missing confirmed opening still inside the returned ID range is not treated as evicted", async () => {
+  const mixed=[{...latest100[0],id:629178},...latest100.slice(1)];
+  assert.equal(await verify(mixed,{
+    status:"confirmed",checkpoint:{messageId:629180}
+  }),null);
+});
+
+test("legacy confirmed snapshots without the random proof cannot bypass authoritative chat", async () => {
+  assert.equal(await verify(latest100,{
+    status:"confirmed",checkpoint:{messageId:629180,openingProof:null}
+  }),null);
+});
+
+test("the history-expiry restore path retains the original sponsor boundary and fails closed for invalid dates", () => {
+  const init = readFileSync(
+    new URL("../userscripts/giveaway/src/05-initialization.js",import.meta.url),"utf8"
+  );
+  assert.match(init,/verified\?\.historyEvicted === true/);
+  assert.match(init,/savedSponsorStart > Number\(restoredCheckpoint\.startedAt\)/);
+  assert.match(init,/Number\(restoredCheckpoint\.sendCompletedAt\) \+ 1000/);
+  assert.match(init,/verified\.sponsorStartTs !== savedSponsorStart/);
+});
