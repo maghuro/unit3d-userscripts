@@ -112,3 +112,21 @@ proof to disambiguate whole-second API timestamps, and older snapshots cannot
 be silently upgraded to that proof. Rehearsal mode cannot establish that an
 invisible proof survives the real Main Chat rendering pipeline; validate this
 against the site before merging a new release.
+
+### Bounded Main Chat history
+
+The stock UNIT3D `GET /api/chat/messages/{room_id}` endpoint reads
+`ChatRepository::messages()`, returning the newest `chat.message_limit`
+messages (100 in the reviewed UNIT3D configuration). It does **not** support
+pagination or `after_id`; sending `?page=2` does not retrieve older messages.
+DarkPeers was independently observed returning precisely 100 messages.
+
+A LIVE opening previously confirmed with a durable random marker and message
+ID can outlive that bounded page. Restore uses the original persisted
+confirmation ONLY if a healthy full page has a minimum ID strictly beyond
+the saved confirmed message ID, and the persisted sponsor eligibility boundary
+is still valid. Pending or proofless openings and missing messages still
+within the API page remain fail-closed. This fallback cannot prove whether
+the original public message was subsequently deleted: it deliberately
+prioritizes a durably verified opening over rechecking evicted history.
+Never extend the 45-minute deadline or redetermine sponsors at reload.
