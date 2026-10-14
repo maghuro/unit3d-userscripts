@@ -147,3 +147,14 @@ test("pending opening offers a user-controlled non-modal archive, never automati
   const remove = initialization.indexOf("localStorage.removeItem(current.storageKey)", verifyArchive);
   assert.ok(createArchive > 0 && verifyArchive > createArchive && remove > verifyArchive);
 });
+
+test("unsupported custom BBCode is rejected before public POST", () => {
+  const beginning = lifecycle.indexOf("async function startGiveaway()");
+  const block = lifecycle.indexOf("const unsupportedTag =", beginning);
+  const preflight = lifecycle.indexOf("const openingSendStartedAt = Date.now()", beginning);
+  assert.ok(beginning >= 0 && block > beginning && preflight > block);
+  const guard = lifecycle.slice(block, preflight);
+  assert.match(guard, /inlineTags\.has\(match\[1\]\.toLowerCase\(\)\)/);
+  assert.match(guard, /Custom message contains unsupported BBCode\/HTML/);
+  assert.match(guard, /return;/);
+});
