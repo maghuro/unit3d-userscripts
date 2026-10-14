@@ -12,8 +12,10 @@ assert.ok(first !== -1 && last > first);
 const source = lifecycle.slice(first, last);
 const startMs = Date.parse("2026-10-14T20:25:29.220Z");
 const endMs = Date.parse("2026-10-14T20:25:29.403Z");
-const preparedMessage = "🎁[b][i][u]\u2063[/u][/i][/b] 💙 [b][color=#4FAFFF]BON POOL CONTRIBUTION G\u200bIVEAWAY[/color][/b]\nI am hosting a giveaway for [b]101 042 BON[/b]";
-const renderedMessage = '<img class="joypixels" alt="&#x1f381;"/> <b><i><u>\u2063</u></i></b> <img class="joypixels" alt="&#x1f499;"/> <b><span style="color: #4FAFFF">BON POOL CONTRIBUTION G\u200bIVEAWAY</span></b><br>I am hosting a giveaway for <b>101 042 BON</b>';
+const openingProof = "\u2063\u200B\u2063\u200B" +
+  "\u200B\u2063".repeat(64) + "\u200B\u2063\u200B\u2063";
+const preparedMessage = "🎁[b][i][u]\u2063[/u][/i][/b] 💙 [b][color=#4FAFFF]BON POOL CONTRIBUTION G\u200bIVEAWAY[/color][/b]\nI am hosting a giveaway for [b]101 042 BON[/b]" + openingProof;
+const renderedMessage = '<img class="joypixels" alt="&#x1f381;"/> <b><i><u>\u2063</u></i></b> <img class="joypixels" alt="&#x1f499;"/> <b><span style="color: #4FAFFF">BON POOL CONTRIBUTION G\u200bIVEAWAY</span></b><br>I am hosting a giveaway for <b>101 042 BON</b>' + openingProof;
 
 const real = (id = 629180, override = {}) => ({
   id, user: { id: 10, username: "maghuro" },
@@ -27,7 +29,7 @@ async function verify(records, opts = {}) {
     status: opts.status || "pending", host: "maghuro",
     startedAt: startMs, sendCompletedAt: endMs,
     windowEndAt: startMs + 10000, afterMessageId: 629175,
-    preparedMessage, sendAcknowledged: opts.ack !== false,
+    preparedMessage, openingProof, sendAcknowledged: opts.ack !== false,
     ...(opts.checkpoint || {})
   };
   const ctx = vm.createContext({
@@ -50,8 +52,27 @@ test("real DarkPeers HTML, JoyPixels alt and whole-second timestamp confirm ackn
   assert.equal(r.sponsorStartTs, Date.parse("2026-10-14T20:25:30Z"));
 });
 
-test("unacknowledged POST cannot use a partially overlapping server-second bucket", async () => {
-  assert.equal(await verify([real()], { ack: false }), null);
+test("durable unique proof recovers a posted opening even after lost HTTP acknowledgement", async () => {
+  assert.equal((await verify([real()], { ack: false })).messageId, 629180);
+});
+
+test("old checkpoints without an opening proof still cannot match partial server-second buckets", async () => {
+  assert.equal(await verify([real()], { checkpoint: { openingProof: null } }), null);
+});
+
+test("mismatched or copied opening proof fails despite matching text", async () => {
+  const differentMarker = "\u2063\u200B\u2063\u200B" +
+    "\u2063\u200B".repeat(64) + "\u200B\u2063\u200B\u2063";
+  assert.equal(await verify([real(629180, {
+    message: renderedMessage.replace(openingProof, differentMarker)
+  })]), null);
+});
+
+test("the opening path generates a fresh 128-bit proof before checkpoint and POST", () => {
+  const marker = lifecycle.indexOf("const openingProof = REHEARSAL_MODE ? null : createOpeningProofMarker()");
+  const saved = lifecycle.indexOf("openingProof,", marker);
+  const posted = lifecycle.indexOf("const introSent = await sendMessage(", marker);
+  assert.ok(marker > 0 && saved > marker && posted > saved);
 });
 
 test("earlier identical chat announcement cannot confirm a later attempt", async () => {
