@@ -3801,10 +3801,32 @@ body.host-panel-dragging * {
                 const savedSponsorStart = optionalFiniteNumber(
                     snap.giveawayData.sponsorStartTs
                 );
+                // The latest-100 chat page may no longer include a previously
+                // confirmed announcement. Its persisted random proof and exact
+                // message ID can remain authoritative ONLY when the healthy
+                // bounded history has clearly advanced beyond that ID. There
+                // is no UNIT3D pagination endpoint to query older messages.
+                // Revalidate the persisted sponsor boundary conservatively;
+                // do not derive a new one from a later, unrelated chat message.
+                const historicalConfirmation = verified?.historyEvicted === true;
+                const historicalSponsorBoundaryOk = historicalConfirmation &&
+                    savedSponsorStart !== null &&
+                    Number(restoredCheckpoint.startedAt) ===
+                        Number(snap.giveawayData.openedAt) &&
+                    Number.isFinite(Number(restoredCheckpoint.sendCompletedAt)) &&
+                    Number(restoredCheckpoint.sendCompletedAt) >=
+                        Number(restoredCheckpoint.startedAt) &&
+                    savedSponsorStart > Number(restoredCheckpoint.startedAt) &&
+                    savedSponsorStart <= Math.min(
+                        Number(restoredCheckpoint.windowEndAt),
+                        Number(restoredCheckpoint.sendCompletedAt) + 1000
+                    );
                 if (!verified ||
                     verified.messageId !== optionalFiniteNumber(restoredCheckpoint.messageId) ||
                     savedSponsorStart === null ||
-                    verified.sponsorStartTs !== savedSponsorStart) {
+                    (historicalConfirmation
+                        ? !historicalSponsorBoundaryOk
+                        : verified.sponsorStartTs !== savedSponsorStart)) {
                     logEvent("Confirmed opening recovery deferred",
                         "Authoritative Main Chat could not reprove the exact saved opening and sponsor boundary.");
                     window.alert(
@@ -4429,6 +4451,26 @@ body.host-panel-dragging * {
                 // Never guess between duplicate equal announcements.
                 if (matches.length === 1) return matches[0];
                 if (matches.length > 1) return null;
+
+                // UNIT3D's GET /api/chat/messages/{room} returns only the last
+                // configured chat.message_limit messages (currently 100) and
+                // does not implement pagination or the after_id query parameter.
+                // A previously CONFIRMED opening with a durable random proof
+                // becomes older than that window during busy chats. When a
+                // complete healthy latest-page has advanced beyond its saved
+                // message ID, retain that earlier confirmation. Never apply
+                // this shortcut to a pending, legacy or still-in-range opening.
+                const confirmedId = optionalFiniteNumber(checkpoint.messageId);
+                const pageIds = payload.data.map(message =>
+                    optionalFiniteNumber(message?.id)
+                );
+                if (checkpoint.status === "confirmed" && hasUniqueProof &&
+                    Number.isSafeInteger(confirmedId) && confirmedId > afterId &&
+                    pageIds.length >= 100 && pageIds.every(id =>
+                        Number.isSafeInteger(id) && id > 0
+                    ) && Math.min(...pageIds) > confirmedId) {
+                    return { messageId: confirmedId, historyEvicted: true };
+                }
             } catch (error) {
                 console.warn("[BON Giveaway] Opening reconciliation deferred:", error);
             }
