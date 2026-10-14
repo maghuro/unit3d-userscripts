@@ -177,6 +177,20 @@
             return;
         }
 
+        // DarkPeers renders richer BBCode (quote/code/img etc.) to HTML whose
+        // text cannot be compared 1:1 to the original markup. Reject those
+        // custom inputs BEFORE a LIVE public POST, never after announcing it.
+        const customStartText = String(customMessageInput?.value || "");
+        const inlineTags = new Set(["b", "i", "u", "s", "color", "size", "url"]);
+        const unsupportedTag = [...customStartText.matchAll(/\[\/?([a-z][a-z0-9]*)(?:=[^\]]*)?\]/gi)]
+            .find(match => !inlineTags.has(match[1].toLowerCase()));
+        if (unsupportedTag || /<\/?[a-z][^>]*>/i.test(customStartText)) {
+            window.alert("GIVEAWAY ERROR: Custom message contains unsupported BBCode/HTML. " +
+                "Remove the markup before starting. Nothing was posted.");
+            customMessageInput?.focus();
+            return;
+        }
+
         // Never overwrite a recoverable opening whose public POST was ambiguous.
         // The pending snapshot is the only path to reconcile entrants/sponsors
         // after a reload. A second start could otherwise destroy that evidence.
