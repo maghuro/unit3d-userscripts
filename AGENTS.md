@@ -53,12 +53,19 @@ multiple userscripts, not just BONanza.
   identical old announcement might falsely verify the new opening).
 - Before posting the public giveaway opening, persist and read back a
   **pending opening checkpoint** with the exact prepared announcement,
-  pre-send timestamp, Main Chat cursor and a bounded publication window.
-  When the send resolves, persist its completion timestamp to further
-  narrow that window. Reconciliation must prove the **entire** server-side
-  timestamp-resolution bucket lies inside the original opening attempt:
-  same-second overlap or later identical announcements are NOT sufficient.
-  ANY opening API failure, including non-OK HTTP responses, must never
+  pre-send timestamp, Main Chat cursor, a cryptographically random
+  **per-opening proof marker** and a bounded publication window.
+  The proof marker must be part of the exact posted payload, survive real
+  DarkPeers HTML rendering, and be verified against the persisted checkpoint
+  with the authenticated author and after-send cursor. The server's timestamp
+  bucket may overlap the original send window ONLY when that distinct durable
+  per-opening marker matches uniquely. Without a valid marker, require the
+  **entire** server timestamp-resolution bucket to lie inside the original
+  opening attempt. An HTTP 200 alone is never sufficient to identify an
+  otherwise-identical same-second announcement. Once the send resolves, persist
+  its completion timestamp to narrow the window. A duplicated marker is
+  ambiguous and must not confirm. Old snapshots cannot acquire a marker
+  retroactively. ANY opening API failure, including non-OK HTTP responses, must never
   trigger the chatbox fallback: the server may already have published
   the opening, so reconcile the original checkpoint instead.
   A timeout/ownership loss is ambiguous: do not erase the checkpoint,
