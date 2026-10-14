@@ -2,7 +2,7 @@
 // @name         DarkPeers BONanza Giveaway | Maghuro Fork
 // @namespace    https://darkpeers.org/users/maghuro
 // @description  BON giveaways on DarkPeers with an optional direct contribution to the BON Pool
-// @version      1.5.15
+// @version      1.5.16
 // @author       🤖 T.R.A.V.I.S., Maghuro & M.A.E.S.T.R.O.
 // @homepageURL  https://darkpeers.org/users/maghuro
 // @updateURL    https://gist.githubusercontent.com/maghuro/da2dbfec94951990cbc54e75a9aee318/raw/DarkPeers_BONanza_Giveaway.meta.js
@@ -20,6 +20,9 @@
 
 // DarkPeers-only fork of "Blutopia BON Giveaway" v6.2.2 by Nums (GPL-3.0-or-later).
 // Changes in this fork:
+//   - v1.5.16 reconciles real DarkPeers HTML/JoyPixels and second-resolution
+//     timestamps after acknowledged opening POSTs. Ambiguous/duplicate
+//     announcements remain blocked; sponsor boundary stays conservative.
 //   - All non-DarkPeers tracker support, the upload.cx extra commands and the
 //     openuserjs update check have been removed.
 //   - A host-selected percentage (0-50%, steps of 5) of the final pot is
@@ -4203,24 +4206,20 @@ body.host-panel-dragging * {
     // An HTTP timeout is NOT evidence the server rejected the POST. Never
     // release a pending opening snapshot merely because sendMessage returned
     // false; an announced giveaway may already exist publicly.
+    // UNIT3D returns HTML (with JoyPixels images) for BBCode chat announcements.
+    // Its second-resolution timestamps cannot fit inside a millisecond POST.
     async function verifyPendingGiveawayOpening(checkpoint) {
         if (!checkpoint ||
             (checkpoint.status !== "pending" && checkpoint.status !== "confirmed") ||
             !checkpoint.preparedMessage || !Number.isFinite(Number(checkpoint.startedAt))) {
             return null;
         }
-
         const afterId = optionalFiniteNumber(checkpoint.afterMessageId);
-        // A missing pre-send cursor makes same-second identical announcements
-        // indistinguishable. Never auto-confirm such a snapshot or payout.
         if (!Number.isSafeInteger(afterId) || afterId <= 0) return null;
         const startedAt = Number(checkpoint.startedAt);
         const persistedHardEnd = optionalFiniteNumber(checkpoint.windowEndAt);
         const completedAt = optionalFiniteNumber(checkpoint.sendCompletedAt);
         const absoluteHardEnd = startedAt + OPENING_POST_MAX_PUBLICATION_WINDOW_MS;
-        // An absent completion time means the tab may have crashed mid-POST:
-        // the pre-persisted hard window is still authoritative. A recorded
-        // completion can only NARROW the window, never extend it.
         const windowEnd = Math.min(
             absoluteHardEnd,
             persistedHardEnd === null ? absoluteHardEnd : persistedHardEnd,
@@ -4229,13 +4228,50 @@ body.host-panel-dragging * {
         if (!Number.isFinite(startedAt) || !Number.isFinite(windowEnd) ||
             windowEnd <= startedAt) return null;
         const senderId = Math.floor(Number(OT_USER_ID));
-        if (!Number.isFinite(senderId) || senderId <= 0) return null;
+        if (!Number.isSafeInteger(senderId) || senderId <= 0) return null;
+        const decodeEntities = value => String(value).replace(
+            /&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi,
+            (entity, token) => {
+                const t = token.toLowerCase();
+                if (t[0] === "#") {
+                    const isHex = t[1] === "x";
+                    const n = Number.parseInt(t.slice(isHex ? 2 : 1), isHex ? 16 : 10);
+                    return Number.isInteger(n) && n >= 0 && n <= 0x10ffff &&
+                        !(n >= 0xd800 && n <= 0xdfff)
+                        ? String.fromCodePoint(n) : entity;
+                }
+                return ({amp: "&", lt: "<", gt: ">", quot: '"',
+                    apos: "'", nbsp: " "})[t] || entity;
+            }
+        );
+        const canonical = (value, rendered) => {
+            let content = String(value ?? "");
+            if (rendered) {
+                content = content.replace(/<img\b[^>]*>/gi, tag => {
+                    const alt = tag.match(/\balt\s*=\s*(["'])([\s\S]*?)\1/i);
+                    return alt ? alt[2] : "\uFFFD";
+                }).replace(/<br\s*\/?>/gi, "\n")
+                    .replace(/<\/(?:p|div)>/gi, "\n")
+                    .replace(/<[^>]*>/g, "");
+            } else {
+                content = content.replace(
+                    /\[(?:\/)?(?:b|i|u|s|color(?:=[^\]]*)?|size(?:=[^\]]*)?|url(?:=[^\]]*)?)\]/gi,
+                    ""
+                );
+            }
+            return decodeEntities(content).replace(/[\s\u00a0]+/g, "");
+        };
+        const expected = canonical(checkpoint.preparedMessage, false);
+        if (!expected) return null;
+        const expectedHost = String(checkpoint.host ||
+            (typeof getLoggedInUsername === "function" ? getLoggedInUsername() : "")
+        ).trim().replace(/^@/, "").toLowerCase();
 
         for (let attempt = 0; attempt < 3; attempt++) {
             if (!ownsTabLock()) return null;
             try {
-                const url = new URL(`/api/chat/messages/${DARKPEERS_MAIN_CHATROOM_ID}`, location.origin);
-                if (afterId !== null) url.searchParams.set("after_id", String(afterId));
+                const url = new URL("/api/chat/messages/" + DARKPEERS_MAIN_CHATROOM_ID, location.origin);
+                url.searchParams.set("after_id", String(afterId));
                 const response = await fetchWithTimeout(
                     url, { credentials: "include", cache: "no-store" }, 5000
                 );
@@ -4244,46 +4280,53 @@ body.host-panel-dragging * {
                 const payload = await response.json();
                 if (!ownsTabLock()) return null;
                 if (!Array.isArray(payload?.data)) throw new Error("Malformed Main Chat messages");
-
+                const matches = [];
                 for (const message of payload.data) {
                     const id = optionalFiniteNumber(message?.id);
                     if (!Number.isSafeInteger(id) || id <= afterId) continue;
-                    // A confirmed checkpoint must identify the SAME original
-                    // announcement after reload. Never replace it with a later
-                    // identical post, even inside the bounded send window.
                     if (checkpoint.status === "confirmed" &&
                         id !== optionalFiniteNumber(checkpoint.messageId)) continue;
-                    const authorId = Math.floor(Number(message?.user_id ?? message?.user?.id));
-                    if (authorId !== senderId) continue;
-                    if (String(message?.message ?? "") !== checkpoint.preparedMessage) continue;
-
+                    const knownAuthorIds = [
+                        message?.user_id, message?.user?.id,
+                        message?.sender?.id, message?.author?.id
+                    ].filter(v => v != null && v !== "").map(Number)
+                        .filter(v => Number.isSafeInteger(v) && v > 0);
+                    if (knownAuthorIds.length) {
+                        if (knownAuthorIds.some(authorId => authorId !== senderId)) continue;
+                    } else {
+                        const serverName = String(
+                            message?.user?.username ?? message?.user?.name ??
+                            message?.author?.username ?? message?.username ?? ""
+                        ).trim().replace(/^@/, "").toLowerCase();
+                        if (!expectedHost || serverName !== expectedHost) continue;
+                    }
+                    if (canonical(message?.message, true) !== expected) continue;
                     const rawTs = String(message?.created_at || "");
                     const timestamp = Date.parse(rawTs);
                     const resolutionMs = unit3dTimestampResolutionMs(rawTs);
-                    // Require the ENTIRE server timestamp bucket to be inside
-                    // the original, bounded opening POST window. A bucket that
-                    // overlaps the pre-send boundary is ambiguous and must not
-                    // confirm an unrelated same-second message. An identical
-                    // message sent after this attempt cannot confirm it either.
                     if (!Number.isFinite(timestamp) ||
-                        !Number.isFinite(resolutionMs) || resolutionMs <= 0 ||
-                        timestamp < startedAt ||
-                        (timestamp + resolutionMs) > windowEnd) continue;
-
-                    return {
+                        !Number.isFinite(resolutionMs) || resolutionMs <= 0) continue;
+                    const whollyInside =
+                        !(timestamp < startedAt || (timestamp + resolutionMs) > windowEnd);
+                    const overlapsAttempt =
+                        timestamp < windowEnd && timestamp + resolutionMs > startedAt;
+                    // Only positive HTTP POST acknowledgement permits accepting
+                    // a unique overlapping server-second bucket. On ambiguous
+                    // delivery the stricter wholly-contained rule still applies.
+                    if (!whollyInside &&
+                        !(checkpoint.sendAcknowledged === true && overlapsAttempt)) continue;
+                    matches.push({
                         messageId: id,
-                        // Exclude the entire potentially ambiguous publication
-                        // timestamp bucket from sponsorship. The 45-minute
-                        // deadline remains anchored to the earlier send start.
                         sponsorStartTs: Math.max(startedAt, timestamp + resolutionMs)
-                    };
+                    });
                 }
+                // Never guess between duplicate equal announcements.
+                if (matches.length === 1) return matches[0];
+                if (matches.length > 1) return null;
             } catch (error) {
                 console.warn("[BON Giveaway] Opening reconciliation deferred:", error);
             }
-            if (attempt < 2) {
-                await new Promise(resolve => setTimeout(resolve, 700));
-            }
+            if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 700));
         }
         return null;
     }
@@ -4646,6 +4689,8 @@ body.host-panel-dragging * {
             giveawayData.__sponsorAccountingVerified = false;
             giveawayData.openingCheckpoint = {
                 status: "pending",
+                host: giveawayData.host,
+                sendAcknowledged: false,
                 startedAt: openingSendStartedAt,
                 afterMessageId,
                 windowEndAt: openingSendStartedAt + OPENING_POST_MAX_PUBLICATION_WINDOW_MS,
@@ -4670,6 +4715,7 @@ body.host-panel-dragging * {
             // this document survived the POST. If it did not, recovery uses
             // the previously persisted bounded upper limit instead.
             giveawayData.openingCheckpoint.sendCompletedAt = Date.now();
+            giveawayData.openingCheckpoint.sendAcknowledged = introSent === true;
             if (!snapshotGiveaway({ force: true, verifyWrite: true })) {
                 logEvent("Opening delivery checkpoint not durable",
                     "Could not preserve the end of the opening attempt; recovery remains pending.");

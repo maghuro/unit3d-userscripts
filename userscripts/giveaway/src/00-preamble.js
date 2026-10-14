@@ -2,7 +2,7 @@
 // @name         DarkPeers BONanza Giveaway | Maghuro Fork
 // @namespace    https://darkpeers.org/users/maghuro
 // @description  BON giveaways on DarkPeers with an optional direct contribution to the BON Pool
-// @version      1.5.15
+// @version      1.5.16
 // @author       🤖 T.R.A.V.I.S., Maghuro & M.A.E.S.T.R.O.
 // @homepageURL  https://darkpeers.org/users/maghuro
 // @updateURL    https://gist.githubusercontent.com/maghuro/da2dbfec94951990cbc54e75a9aee318/raw/DarkPeers_BONanza_Giveaway.meta.js
@@ -20,6 +20,9 @@
 
 // DarkPeers-only fork of "Blutopia BON Giveaway" v6.2.2 by Nums (GPL-3.0-or-later).
 // Changes in this fork:
+//   - v1.5.16 reconciles real DarkPeers HTML/JoyPixels and second-resolution
+//     timestamps after acknowledged opening POSTs. Ambiguous/duplicate
+//     announcements remain blocked; sponsor boundary stays conservative.
 //   - All non-DarkPeers tracker support, the upload.cx extra commands and the
 //     openuserjs update check have been removed.
 //   - A host-selected percentage (0-50%, steps of 5) of the final pot is
