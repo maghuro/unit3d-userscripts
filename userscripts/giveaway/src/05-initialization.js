@@ -521,8 +521,8 @@
         remNumInput = document.getElementById("reminderNum");
         reminderEvery = document.getElementById("reminderEvery");
 
-        // Enforce whole-number minutes and DarkPeers' 45-minute maximum in the UI.
-        // The start handler separately validates the value against script/DOM bypasses.
+        // Enforce whole-number minutes in the Time field (no decimals / exponent notation)
+        // (No page refresh required; prevents accidental fractional minutes.)
         (function enforceWholeMinutesOnTimerField() {
             if (!timerInput) return;
 
@@ -541,12 +541,10 @@
                 }
 
                 if (/^\d+$/.test(v)) {
-                    const n = Number(v);
-                    if (Number.isSafeInteger(n) && n >= 1) {
-                        const bounded = String(Math.min(n, MAX_GIVEAWAY_MINUTES));
-                        timerInput.value = bounded;
+                    const n = parseInt(v, 10);
+                    if (Number.isFinite(n) && n >= 1) {
                         timerInput.setCustomValidity("");
-                        lastValid = bounded;
+                        lastValid = v;
                         return;
                     }
                 }
@@ -969,11 +967,7 @@
         if (coinInput && preset.amount) coinInput.value = preset.amount;
         if (startInput && preset.startNum) startInput.value = preset.startNum;
         if (endInput && preset.endNum) endInput.value = preset.endNum;
-        if (timerInput && preset.timer) {
-            const minutes = Number(preset.timer);
-            timerInput.value = Number.isSafeInteger(minutes) && minutes >= 1
-                ? String(Math.min(minutes, MAX_GIVEAWAY_MINUTES)) : "5";
-        }
+        if (timerInput && preset.timer) timerInput.value = preset.timer;
         if (remNumInput && preset.reminders != null) remNumInput.value = preset.reminders;
         if (winnersInput && preset.winners) winnersInput.value = preset.winners;
         if (scaleWinnersToggleInput) {
@@ -1075,108 +1069,36 @@
     function readActiveGiveawayRawForHost(hostName = "", { migrateLegacy = false } = {}) {
         const requestedHostKey = normalizeUserKey(hostName || getLoggedInUsername());
         const storageKey = getActiveGiveawayStorageKey(requestedHostKey);
-        if (!requestedHostKey || !storageKey) {
-            return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: false };
-        }
+        if (!requestedHostKey || !storageKey) return { storageKey, raw: null, migratedLegacy: false };
 
-        // Namespaced recovery never proves the old hostname-wide slot empty.
-        // Both slots may contain distinct settlement evidence for real BON.
-        let hasStoredState = false;
         try {
             const namespacedRaw = localStorage.getItem(storageKey);
-            const hasNamespacedState = namespacedRaw !== null;
-            hasStoredState = hasNamespacedState;
-            const namespacedResult = {
-                storageKey, raw: namespacedRaw, hasStoredState: hasNamespacedState,
-                migratedLegacy: false, readOk: true
-            };
+            if (namespacedRaw) return { storageKey, raw: namespacedRaw, migratedLegacy: false };
 
-            // Rehearsal is isolated from the LIVE legacy recovery key.
-            if (REHEARSAL_MODE) return namespacedResult;
-
+            // Backwards-compatible migration from pre-v1.3.24 hostname-wide storage.
+            // A legacy snapshot belonging to another account is deliberately left
+            // untouched; the current account now has its own namespace and cannot
+            // overwrite that foreign recovery state. Rehearsal storage never
+            // imports a live legacy snapshot.
+            if (REHEARSAL_MODE) {
+                return { storageKey, raw: null, migratedLegacy: false };
+            }
             const legacyRaw = localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY);
-            // Only null means absent, even if the current namespace is occupied.
-            if (legacyRaw === null) return namespacedResult;
-            hasStoredState = true;
+            if (!legacyRaw) return { storageKey, raw: null, migratedLegacy: false };
 
             const legacy = JSON.parse(legacyRaw);
-            const legacyHost = legacy?.giveawayData?.host;
-            // Reject non-string host identities rather than coercing a
-            // malicious/broken array, object or number into a username.
-            const legacyHostKey = typeof legacyHost === "string"
-                ? normalizeUserKey(legacyHost) : "";
-
-            if (!legacyHostKey) {
-                console.warn("[BON Giveaway] Unidentified legacy recovery is occupied; manual review required.");
-                return {
-                    storageKey, raw: legacyRaw, hasStoredState: true,
-                    migratedLegacy: false, readOk: false
-                };
+            const legacyHostKey = normalizeUserKey(legacy?.giveawayData?.host);
+            if (!legacyHostKey || legacyHostKey !== requestedHostKey) {
+                return { storageKey, raw: null, migratedLegacy: false };
             }
 
-            if (legacyHostKey !== requestedHostKey) {
-                // Only a positively identified different host can be ignored.
-                return namespacedResult;
-            }
-
-            if (hasNamespacedState) {
-                // Same host is NOT the same settlement. A stale copy can
-                // omit already-paid ledger entries. Never auto-restore while
-                // conflicting same-host records are present.
-                if (namespacedRaw !== legacyRaw) {
-                    console.warn("[BON Giveaway] Conflicting same-host recovery slots; manual review required.");
-                    return {
-                        storageKey, raw: namespacedRaw, hasStoredState: true,
-                        migratedLegacy: false, readOk: false
-                    };
-                }
-                if (migrateLegacy) {
-                    // Both records were byte-identical. Under the exclusive
-                    // restore lock, retire the redundant old copy BEFORE
-                    // a pending -> confirmed write can make it conflict.
-                    // Verify BOTH values are unchanged before deletion.
-                    if (localStorage.getItem(storageKey) !== namespacedRaw ||
-                        localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== legacyRaw) {
-                        throw new Error("Duplicate recovery state changed before cleanup");
-                    }
-                    localStorage.removeItem(LS_ACTIVE_GIVEAWAY_LEGACY);
-                    if (localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== null) {
-                        throw new Error("Duplicate legacy recovery cleanup not confirmed");
-                    }
-                }
-                return namespacedResult;
-            }
-
-            // Only the locked restore path migrates the single identified
-            // legacy record. Never delete it before read-back confirmation.
             if (migrateLegacy) {
                 localStorage.setItem(storageKey, legacyRaw);
-                if (localStorage.getItem(storageKey) !== legacyRaw) {
-                    throw new Error("Legacy migration read-back mismatch");
-                }
-                // A successful write alone is not a completed migration.
-                // Confirm the legacy key really disappeared BEFORE any
-                // checkpoint mutation can diverge the two same-host copies.
-                // If removal is denied or silently ignored, fail closed.
-                if (localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== legacyRaw) {
-                    throw new Error("Legacy recovery changed before removal");
-                }
                 localStorage.removeItem(LS_ACTIVE_GIVEAWAY_LEGACY);
-                if (localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== null) {
-                    throw new Error("Single-slot legacy migration cleanup not confirmed");
-                }
             }
-            return {
-                storageKey, raw: legacyRaw, hasStoredState: true,
-                migratedLegacy: !!migrateLegacy, readOk: true
-            };
-        } catch (error) {
-            // Storage or JSON failure is NOT evidence of vacant recovery.
-            console.warn("[BON Giveaway] Active recovery storage read failed:", error);
-            return {
-                storageKey, raw: null, hasStoredState,
-                migratedLegacy: false, readOk: false
-            };
+            return { storageKey, raw: legacyRaw, migratedLegacy: !!migrateLegacy };
+        } catch {
+            return { storageKey, raw: null, migratedLegacy: false };
         }
     }
 
@@ -1400,13 +1322,7 @@
      * Called at key mutation points (new entry, start, addbon, sponsor, time adjust).
      */
     function snapshotGiveaway({ force = false, verifyWrite = false } = {}) {
-        // Preflight state exists only in memory while balance, Gift History and
-        // chat cursor checks run. Never persist it as a legacy giveaway when
-        // pagehide/unload fires BEFORE the opening checkpoint is saved.
-        const proof = giveawayData?.openingCheckpoint;
-        if (!giveawayData ||
-            !proof || (proof.status !== "pending" && proof.status !== "confirmed") ||
-            !canMutateActiveGiveaway() || (giveawayData.__ending && !force)) return false;
+        if (!giveawayData || !canMutateActiveGiveaway() || (giveawayData.__ending && !force)) return false;
         try {
             const snapshot = {
                 giveawayData: {
@@ -1418,12 +1334,6 @@
                     totalEntries: giveawayData.totalEntries,
                     winningNumber: giveawayData.winningNumber,
                     totalSeconds: giveawayData.totalSeconds,
-                    openedAt: giveawayData.openedAt,
-                    // Deadline and sponsor-window boundaries are different.
-                    sponsorStartTs: giveawayData.sponsorStartTs,
-                    openingCheckpoint: giveawayData.openingCheckpoint &&
-                        typeof giveawayData.openingCheckpoint === "object"
-                            ? { ...giveawayData.openingCheckpoint } : null,
                     endTs: giveawayData.endTs,
                     winnersNum: giveawayData.winnersNum,
                     baseWinnersAtStart: giveawayData.baseWinnersAtStart,
@@ -1469,8 +1379,6 @@
                     lastMsgId: Math.max(0, Math.floor(Number(window.__activeTracker.lastMsgId) || 0)),
                     cursorInitialized: !!window.__activeTracker.cursorInitialized,
                     giftHistoryClockOffsetMs: optionalFiniteNumber(window.__activeTracker.giftHistoryClockOffsetMs),
-                    giftHistoryClockOffsetUncertaintyMs:
-                        optionalFiniteNumber(window.__activeTracker.giftHistoryClockOffsetUncertaintyMs),
                     giftHistoryInitialized: !!window.__activeTracker.giftHistoryInitialized,
                     giftHistorySeenKeys: Array.from(window.__activeTracker.giftHistorySeenKeys || []).slice(-250),
                     historyFallbackActive: !!window.__activeTracker.historyFallbackActive,
@@ -1543,13 +1451,7 @@
             const loggedInHostKey = normalizeUserKey(getLoggedInUsername());
             if (!loggedInHostKey) return null;
 
-            // UI bootstrap runs BEFORE Web Lock acquisition: never migrate or
-            // remove legacy keys here. Only the post-lock restore read may do so.
-            const stored = readActiveGiveawayRawForHost(loggedInHostKey, { migrateLegacy: false });
-            if (!stored.readOk) {
-                console.warn("[BON Giveaway] Recovery storage unreadable; leaving any existing state untouched.");
-                return null;
-            }
+            const stored = readActiveGiveawayRawForHost(loggedInHostKey, { migrateLegacy: true });
             if (!stored.raw) return null;
             const snap = JSON.parse(stored.raw);
             if (!snap || !snap.giveawayData) return null;
@@ -1568,75 +1470,14 @@
                 return null;
             }
 
-            // Pre-checkpoint releases never proved that an opening reached
-            // Main Chat, and their startTime was recorded AFTER the send.
-            // Preserve the original raw snapshot, including old/expired and
-            // partially-paid records, but NEVER auto-resume or auto-settle it.
-            // Rewriting its 45-minute deadline from that late startTime would
-            // also violate the absolute public-opening cap.
-            const checkpoint = snap.giveawayData.openingCheckpoint;
-            if (!checkpoint || (
-                checkpoint.status !== "pending" &&
-                checkpoint.status !== "confirmed"
-            ) || (
-                checkpoint.status === "confirmed" &&
-                (!Number.isFinite(Number(snap.giveawayData.openedAt)) ||
-                 Number(snap.giveawayData.openedAt) <= 0 ||
-                 !Number.isFinite(Number(snap.giveawayData.sponsorStartTs)) ||
-                 Number(snap.giveawayData.sponsorStartTs) <
-                     Number(snap.giveawayData.openedAt))
-            )) {
-                console.warn(
-                    "[BON Giveaway] Unverified legacy opening retained for manual review; " +
-                    "automatic resume, deadline migration and BON settlement are blocked."
-                );
-                snap.__legacyOpeningUnverified = true;
-                return snap;
-            }
-
             const endTs = Number(snap.giveawayData.endTs);
             if (!Number.isFinite(endTs) || endTs <= 0) {
-                // Invalid saved data can reflect an incomplete write or an
-                // in-progress payout. Preserve it for manual inspection;
-                // never erase potentially recoverable settlement evidence.
-                console.warn("[BON Giveaway] Invalid saved deadline; snapshot preserved for manual recovery.");
+                clearGiveawaySnapshot();
                 return null;
             }
 
-            // An older release may have saved a deadline beyond the DarkPeers cap.
-            // Restrict only an uncommitted draw: committed settlement timestamps
-            // are immutable and must survive crash/reload unchanged.
-            const startTs = Number(snap.giveawayData.openedAt ?? snap.startTime);
-            const maxEndTs = getGiveawayMaxEndTs(startTs);
+            const overdueMs = Date.now() - endTs;
             const committedSettlement = snap.giveawayData?.settlement?.committed === true;
-            const correctedDeadline = !committedSettlement && maxEndTs !== null && endTs > maxEndTs;
-            if (correctedDeadline) {
-                snap.giveawayData.endTs = maxEndTs;
-
-                // Legacy reminder offsets belong to the *old* deadline. Rebuild
-                // them against the capped original duration, preserving the
-                // configured reminder count. countdownTimer/nextReminderMs will
-                // discard thresholds already elapsed without replaying them.
-                const requestedReminders = Number(snap.giveawayData.reminderNum);
-                const reminderCount = Number.isFinite(requestedReminders)
-                    ? Math.max(0, Math.min(
-                        Math.floor(requestedReminders),
-                        getReminderLimits(MAX_GIVEAWAY_MINUTES)[0]
-                    ))
-                    : 0;
-                snap.giveawayData.reminderSchedule = getReminderSchedule(MAX_GIVEAWAY_MINUTES, reminderCount);
-                snap.giveawayData.reminderNum = reminderCount;
-                const cadenceSec = reminderCount > 0
-                    ? MAX_GIVEAWAY_MINUTES * 60 / (reminderCount + 1)
-                    : 0;
-                snap.giveawayData.reminderFreqSec = cadenceSec;
-                snap.giveawayData.nextReminderSec = cadenceSec;
-                snap.giveawayData.totalSeconds = MAX_GIVEAWAY_MINUTES * 60;
-                console.warn("[BON Giveaway] Recovered deadline and reminder schedule capped at 45 minutes after public opening.");
-            }
-            // Apply the normal one-hour restore grace to the *capped* deadline.
-            // Otherwise ancient giveaways could unexpectedly resume settlement.
-            const overdueMs = Date.now() - Number(snap.giveawayData.endTs);
             const closingSettlementLatched =
                 snap.giveawayData?.closingIntent === true ||
                 snap.giveawayData?.closingNoticeSent === true ||
@@ -1645,16 +1486,11 @@
             if (
                 overdueMs > EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS &&
                 !committedSettlement &&
-                !closingSettlementLatched &&
-                snap.giveawayData?.openingCheckpoint?.status !== "pending"
+                !closingSettlementLatched
             ) {
-                // This loader also runs BEFORE acquiring the Web Lock.
-                // Deleting a stale recovery slot here could erase another
-                // tab's in-progress settlement or manual recovery evidence.
-                // Preserve it and block auto-resume, never clear it on read.
-                console.warn("[BON Giveaway] Expired active snapshot preserved for manual review; automatic settlement grace exceeded.");
-                snap.__expiredBeyondGrace = true;
-                return snap;
+                console.warn("[BON Giveaway] Discarding stale expired active snapshot; automatic settlement grace exceeded.");
+                clearGiveawaySnapshot();
+                return null;
             }
 
             // Once settlement is committed OR the closing latch has been persisted,
@@ -1663,11 +1499,8 @@
             // active-giveaway grace window.
             snap.__expiredAtLoad = overdueMs >= 0 || closingSettlementLatched;
             return snap;
-        } catch (error) {
-            // Malformed or temporarily unreadable snapshots must not be
-            // silently discarded; a subsequent clean read or manual analysis
-            // may be needed to prevent lost or duplicate BON payouts.
-            console.warn("[BON Giveaway] Unable to parse recovery snapshot; retaining stored data:", error);
+        } catch {
+            clearGiveawaySnapshot();
             return null;
         }
     }
@@ -1763,22 +1596,21 @@
     }
 
     async function restoreGiveawayFromSnapshot(snap) {
-        // The earlier snapshot is only a discovery hint. Another tab may
-        // persist a newer settlement while we await the Web Lock. Classify
-        // recovery status, expiry, checkpoint and host ONLY after rereading
-        // the latest saved state under exclusive ownership.
-        if (!snap) return false;
+        if (!snap || !snap.giveawayData) return false;
 
         // Validate the live DarkPeers identity/Main Chat context BEFORE claiming
         // ownership or touching the recoverable snapshot. A transient/wrong chat
         // context must never destroy or mutate persisted giveaway state.
         cacheChatContext();
         const restoreHost = getLoggedInUsername();
+        const restoreExpectedHost = String(snap.giveawayData.host || "").trim();
         const restoreUserId = Math.floor(Number(OT_USER_ID));
         const restorePublicRoom = Math.floor(Number(OT_CHATROOM_ID));
         const restoreExpectedRoom = Math.floor(Number(DARKPEERS_MAIN_CHATROOM_ID));
         const restoreContextOk =
             !!restoreHost &&
+            !!restoreExpectedHost &&
+            normalizeUserKey(restoreHost) === normalizeUserKey(restoreExpectedHost) &&
             Number.isFinite(restoreUserId) &&
             restoreUserId > 0 &&
             Number.isFinite(restorePublicRoom) &&
@@ -1790,6 +1622,7 @@
                 "[BON Giveaway] Restore deferred: DarkPeers identity/Main Chat context is not trustworthy.",
                 {
                     restoreHost,
+                    expectedHost: restoreExpectedHost,
                     userId: restoreUserId,
                     publicRoom: restorePublicRoom,
                     expectedRoom: restoreExpectedRoom,
@@ -1813,135 +1646,8 @@
         }
 
         try {
-            // The caller's snap was read before awaiting the Web Lock.
-            // Another tab may have committed/persisted payout state while we
-            // were queued, then released its lock. Never restore that stale
-            // object and overwrite newer payout/checkpoint information.
-            // Refresh storage and re-apply all current restore validation
-            // WHILE holding exclusive ownership.
-            const lockedRead = readActiveGiveawayRawForHost(restoreHost, {
-                migrateLegacy: true
-            });
-            if (!ownsTabLock() || !lockedRead.readOk ||
-                !lockedRead.hasStoredState || !lockedRead.raw) {
-                console.warn("[BON Giveaway] Restore blocked: recovery storage changed or could not be read under lock.");
-                releaseTabLock();
-                return false;
-            }
-            const lockedSnapshot = loadGiveawaySnapshot();
-            if (!ownsTabLock() || !lockedSnapshot ||
-                lockedSnapshot.__legacyOpeningUnverified === true ||
-                lockedSnapshot.__expiredBeyondGrace === true ||
-                !lockedSnapshot.giveawayData ||
-                normalizeUserKey(lockedSnapshot.giveawayData.host) !==
-                    normalizeUserKey(restoreHost) ||
-                (lockedSnapshot.giveawayData.rehearsalMode === true) !== REHEARSAL_MODE) {
-                console.warn("[BON Giveaway] Restore blocked: locked snapshot is absent, unverified or belongs to another mode/host.");
-                if (lockedSnapshot?.__legacyOpeningUnverified === true ||
-                    lockedSnapshot?.__expiredBeyondGrace === true) {
-                    window.alert(
-                        "GIVEAWAY RECOVERY REQUIRES MANUAL REVIEW: The latest saved state " +
-                        "cannot safely resume entries or BON settlement. " +
-                        "The original recovery data has been preserved."
-                    );
-                }
-                releaseTabLock();
-                return false;
-            }
-            snap = lockedSnapshot;
-
-            // Local storage alone is not authoritative evidence of a public
-            // opening. For a previously confirmed LIVE giveaway, prove that
-            // the exact original message ID/host/text/timestamp still exists
-            // in Main Chat before restoring entries, pot or settlement. The
-            // verifier checks the original bounded POST window and cursor.
-            const restoredCheckpoint = snap.giveawayData?.openingCheckpoint;
-            if (!REHEARSAL_MODE && restoredCheckpoint?.status === "confirmed") {
-                const verified = await verifyPendingGiveawayOpening(restoredCheckpoint);
-                const savedSponsorStart = optionalFiniteNumber(
-                    snap.giveawayData.sponsorStartTs
-                );
-                if (!verified ||
-                    verified.messageId !== optionalFiniteNumber(restoredCheckpoint.messageId) ||
-                    savedSponsorStart === null ||
-                    verified.sponsorStartTs !== savedSponsorStart) {
-                    logEvent("Confirmed opening recovery deferred",
-                        "Authoritative Main Chat could not reprove the exact saved opening and sponsor boundary.");
-                    window.alert(
-                        "GIVEAWAY RECOVERY PAUSED: The saved opening could not " +
-                        "be verified again against Main Chat. No entries, " +
-                        "sponsor updates or BON settlement will be resumed."
-                    );
-                    releaseTabLock();
-                    return false;
-                }
-            }
-
-            // An opening may have reached Main Chat even if its POST response was
-            // lost. It was durably checkpointed BEFORE sending; never resume
-            // entries, sponsor accounting or settlement until the exact public
-            // opening is verified from authoritative chat history.
-            if (snap.giveawayData?.openingCheckpoint?.status === "pending") {
-                const verified = await verifyPendingGiveawayOpening(
-                    snap.giveawayData.openingCheckpoint
-                );
-                if (!verified) {
-                    logEvent("Opening recovery deferred",
-                        "Main Chat could not prove the uncertain opening; existing checkpoint preserved.");
-                    window.alert(
-                        "GIVEAWAY RECOVERY PAUSED: The public opening could not be verified. " +
-                        "No giveaway settlement or BON transfer will run. Retry from Main Chat later."
-                    );
-                    releaseTabLock();
-                    return false;
-                }
-
-                // Never resurrect a very old uncertain opening into automatic
-                // settlement. A human must investigate after recovery grace.
-                const overdue = Date.now() - Number(snap.giveawayData.endTs);
-                if (overdue > EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS) {
-                    logEvent("Opening recovery requires manual review",
-                        "Opening verified but its automatic settlement grace has expired.");
-                    window.alert(
-                        "GIVEAWAY RECOVERY PAUSED: An old public opening was verified, " +
-                        "but automatic settlement is unsafe after the recovery grace. " +
-                        "Keep the saved recovery state for manual review."
-                    );
-                    releaseTabLock();
-                    return false;
-                }
-
-                snap.giveawayData.sponsorStartTs = verified.sponsorStartTs;
-                snap.giveawayData.openingCheckpoint.status = "confirmed";
-                snap.giveawayData.openingCheckpoint.messageId = verified.messageId;
-                // Persist the verified boundary before any sponsor reconciliation.
-                // Do not call snapshotGiveaway yet: entries haven't been restored
-                // into memory, so serializing them now would overwrite recovery.
-                const storageKey = getActiveGiveawayStorageKey(snap.giveawayData.host);
-                if (!storageKey) {
-                    releaseTabLock();
-                    return false;
-                }
-                const persisted = { ...snap };
-                delete persisted.__expiredAtLoad;
-                const verifiedRaw = JSON.stringify(persisted);
-                try {
-                    localStorage.setItem(storageKey, verifiedRaw);
-                    if (localStorage.getItem(storageKey) !== verifiedRaw) {
-                        throw new Error("Verified opening checkpoint read-back mismatch");
-                    }
-                } catch (error) {
-                    console.warn("[BON Giveaway] Could not persist verified opening:", error);
-                    releaseTabLock();
-                    return false;
-                }
-            }
-
             // 1) Restore giveaway data
             giveawayData = snap.giveawayData;
-            const restoredOpenTs = Number(giveawayData.openedAt ?? snap.startTime);
-            giveawayData.openedAt = getGiveawayMaxEndTs(restoredOpenTs) !== null
-                ? restoredOpenTs : null;
 
             // Restore starts fail-closed for sponsor accounting. Entries and time
             // may resume, but BON mutation and settlement stay blocked until the
@@ -2063,19 +1769,11 @@
             updateRigToggleUI();
 
             // 4) Restore start time
-            giveawayStartTime = giveawayData.openedAt !== null
-                ? new Date(giveawayData.openedAt) : new Date();
+            giveawayStartTime = snap.startTime ? new Date(snap.startTime) : new Date();
 
             lastKnownGiveawayHostKey = normUserKey(giveawayData.host) || lastKnownGiveawayHostKey;
 
-            // 5) Lock form fields. Keep the restored reminder count reflected
-            // in the UI: a later !addtime/!removetime rebuilds from this field.
-            if (remNumInput) {
-                const savedReminderCount = Number(giveawayData.reminderNum);
-                remNumInput.value = String(Number.isFinite(savedReminderCount)
-                    ? Math.max(0, Math.min(MAX_REMINDERS, Math.floor(savedReminderCount)))
-                    : 0);
-            }
+            // 5) Lock form fields
             startButton.disabled = false;
             coinInput.disabled = true;
             startInput.disabled = true;
@@ -2143,17 +1841,12 @@
             const savedTracker = (snap.sponsorTracker && typeof snap.sponsorTracker === "object") ? snap.sponsorTracker : null;
             const tracker = new SponsorTracker({
                 chatroomId,
-                giveawayStartTime: new Date(
-                    giveawayData.sponsorStartTs ?? giveawayStartTime.getTime()
-                ),
+                giveawayStartTime,
                 giveawayData,
                 lastMsgId: savedTracker ? savedTracker.lastMsgId : 0,
                 cursorInitialized: savedTracker ? !!savedTracker.cursorInitialized : false,
                 giftHistoryClockOffsetMs: savedTracker
                     ? optionalFiniteNumber(savedTracker.giftHistoryClockOffsetMs)
-                    : null,
-                giftHistoryClockOffsetUncertaintyMs: savedTracker
-                    ? optionalFiniteNumber(savedTracker.giftHistoryClockOffsetUncertaintyMs)
                     : null,
                 giftHistoryInitialized: savedTracker ? !!savedTracker.giftHistoryInitialized : false,
                 giftHistorySeenKeys: savedTracker && Array.isArray(savedTracker.giftHistorySeenKeys)

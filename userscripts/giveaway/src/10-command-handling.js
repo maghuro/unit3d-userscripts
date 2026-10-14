@@ -231,19 +231,16 @@
 
     function makeStaffAttributedReply(ctx) {
         const reply = ctx && typeof ctx.reply === "function" ? ctx.reply : sendMessage;
-        // Silent Mode sends ALL command responses privately to the invoker,
-        // including staff errors/denials. Staff actions are attributed in the
-        // public chat only when the host has not enabled Silent Mode.
-        if (GENERAL_SETTINGS.silent_mode ||
-            !ctx || !isNonHostStaffAction(ctx.author, ctx.fancyName, ctx.giveawayData?.host)) {
+        if (!ctx || !isNonHostStaffAction(ctx.author, ctx.fancyName, ctx.giveawayData?.host)) {
             return reply;
         }
 
         const prefix =
             `👮 [b][color=#5DE2E7]Staff action by ${sanitizeNick(ctx.author)}:[/color][/b] `;
 
-        // Public staff attribution remains on when Silent Mode is disabled.
-        // Rehearsal Mode still redirects script output privately to the host.
+        // Staff intervention is operationally significant and must stay public
+        // even when the host enabled Silent Mode. Rehearsal Mode still suppresses
+        // sendMessage itself, so testing cannot leak messages into live chat.
         return (message) => sendMessage(prefix + message);
     }
 
@@ -303,7 +300,7 @@
             }
 
             const action = (args[0] || "").toLowerCase(); // "add" / "remove"
-            const minutes = Number(args[1]);
+            const minutes = parseFloat(args[1]);
             const isPriv = normalizeUserKey(author) === normalizeUserKey(giveawayData.host) || isAdmin(fancyName);
 
             if (!isPriv) return; // silently ignore non-host/non-admin
@@ -813,7 +810,7 @@
                 const announcement =
                     `[b][color=${SCALING_ACCENT_COLOR}]Host adjustment:[/color][/b] ` +
                     `[b]Winners ${direction}[/b]: [b][color=#5DE2E7]${prevEffective} → ${newCount} (${sign}${delta})[/color][/b].`;
-                reply(announcement);
+                sendMessage(announcement);
                 flashWinnersUI();
                 logEvent("Host adjusted winners", `${prevEffective} -> ${newCount} (${sign}${delta})`);
             }
@@ -1136,14 +1133,11 @@
     
             snapshotGiveaway({ force: true });
 
-            // Command-generated pot announcements must honor Silent Mode.
-            // Route privately to the invoking host there; preserve ownership
-            // checking in both public and private delivery paths.
-            const potAnnouncement = `${bridgeMarker(BRIDGE_MARKERS.POT, "💰")} ` +
-                [addedPart, totalPart, donationPart, scalingPart].filter(Boolean).join(" ");
-            const announced = await sendCommandResponse(author, potAnnouncement, {
-                requireExclusiveGiveawayOwnership: true
-            });
+            const announced = await sendMessage(
+                `${bridgeMarker(BRIDGE_MARKERS.POT, "💰")} ` +
+                [addedPart, totalPart, donationPart, scalingPart].filter(Boolean).join(" "),
+                { requireExclusiveGiveawayOwnership: true }
+            );
 
             if (announced === false) {
                 logEvent(
@@ -1181,39 +1175,16 @@
             if (!isHostOrAdmin(author, fancyName, giveawayData.host)) return;
             const actionReply = makeStaffAttributedReply(ctx);
 
-            const mins = Number(args[0]);
-            if (!Number.isFinite(mins) || mins <= 0) {
+            const mins = parseFloat(args[0]);
+            if (isNaN(mins) || mins <= 0) {
                 actionReply(
                     "[color=red]Usage:[/color] !time add|remove <minutes> or !addtime|!removetime <minutes>"
                 );
                 return;
             }
 
-            // Limit the TOTAL duration since the public opening, not merely the
-            // remaining countdown. Host and staff use this same enforcement path.
-            const maxEndTs = getGiveawayMaxEndTs(giveawayData.openedAt);
-            const oldEndTs = Number(giveawayData.endTs);
-            const nextEndTs = oldEndTs + sign * mins * 60_000;
-            if (maxEndTs === null || !Number.isFinite(oldEndTs) || !Number.isFinite(nextEndTs)) {
-                actionReply("[color=red]Time change refused:[/color] a trustworthy giveaway opening time is unavailable.");
-                return;
-            }
-            if (nextEndTs > maxEndTs) {
-                if (ctx.source === "chat") {
-                    // Use the ordinary command-response route. Silent Mode
-                    // sends this privately to the command author; Rehearsal
-                    // Mode redirects outgoing messages privately to the host.
-                    actionReply(
-                        `🚫 [color=red][b]Time limit exceeded![/b][/color] ` +
-                        `DarkPeers giveaways can last at most [b]${MAX_GIVEAWAY_MINUTES} minutes total[/b] ` +
-                        `from opening. [b]No time was added.[/b]`
-                    );
-                } else {
-                    actionReply(`[color=red]Time change refused:[/color] DarkPeers allows a maximum of ${MAX_GIVEAWAY_MINUTES} minutes from the original opening.`);
-                }
-                return;
-            }
-            giveawayData.endTs = nextEndTs;
+            const deltaMs = sign * mins * 60_000;
+            giveawayData.endTs += deltaMs; // move the deadline
 
             rebuildSchedule(); // rebuild reminder schedule
 

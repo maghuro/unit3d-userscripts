@@ -2,7 +2,7 @@
 // @name         DarkPeers BONanza Giveaway | Maghuro Fork
 // @namespace    https://darkpeers.org/users/maghuro
 // @description  BON giveaways on DarkPeers with an optional direct contribution to the BON Pool
-// @version      1.5.15
+// @version      1.5.16
 // @author       🤖 T.R.A.V.I.S., Maghuro & M.A.E.S.T.R.O.
 // @homepageURL  https://darkpeers.org/users/maghuro
 // @updateURL    https://gist.githubusercontent.com/maghuro/da2dbfec94951990cbc54e75a9aee318/raw/DarkPeers_BONanza_Giveaway.meta.js
@@ -20,6 +20,8 @@
 
 // DarkPeers-only fork of "Blutopia BON Giveaway" v6.2.2 by Nums (GPL-3.0-or-later).
 // Changes in this fork:
+//   - v1.5.16 rolls back PR #29 to the previously working v1.5.14 runtime.
+//     The 45-minute cap and opening-recovery changes are deliberately removed.
 //   - All non-DarkPeers tracker support, the upload.cx extra commands and the
 //     openuserjs update check have been removed.
 //   - A host-selected percentage (0-50%, steps of 5) of the final pot is
@@ -244,37 +246,6 @@
 //     fallback now preserves exclusive ownership, uses the chatbox-only slash-command
 //     path so an ambiguous chat-API timeout can never be mistaken for a definite
 //     no-send, and restores only the exact unsent terminal marker after durable read-back.
-//   - v1.5.15 enforces DarkPeers' 45-minute maximum from public opening across
-//     the form, presets, host/staff time commands and restored active snapshots.
-//     Rejected !addtime / !time add attempts explain the 45-minute total
-//     limit without changing the deadline. Silent Mode sends all host/staff
-//     command replies privately, but explicit !reminder requests still post
-//     publicly just like automatic reminders. Rehearsal routes both to host PMs.
-//     Opening delivery is checkpointed before the POST and verified against
-//     Main Chat; a timeout preserves recovery rather than resetting. Sponsor
-//     eligibility begins after the verified publication timestamp bucket,
-//     separately from the conservative 45-minute pre-send deadline. Live
-//     openings require a valid Main Chat cursor before any public POST.
-//     Only exact announcements whose complete server timestamp bucket lies
-//     within a persisted, bounded opening attempt can confirm publication;
-//     later repeated or overlapping same-second announcements are rejected.
-//     Gift History timestamps also must start no earlier than the verified
-//     sponsor opening boundary; HTTP error/5xx opening POSTs must never
-//     trigger a second announcement via chatbox fallback.
-//     A second tab must recheck saved recovery AFTER acquiring its Web Lock.
-//     Confirmed LIVE openings are authoritatively rechecked on every restore.
-//     When Gift History calibration is unavailable, ALL ambiguous gift rows
-//     remain uncounted/retryable until reliable calibration succeeds.
-//     Legacy snapshots without verified opening evidence are retained only
-//     for manual recovery (no automatic 45-minute rewrite or BON payout).
-//     Coarse Gift History calibration uncertainty is tracked, saved across
-//     reloads, and subtracted before sponsor-start eligibility checks.
-//     Recovery storage read failures block new giveaways even when raw data
-//     appears absent; even empty-but-present recovery keys are occupied.
-//     Before the exclusive Web Lock, reading must not migrate legacy keys.
-//     Preflight before the persisted opening checkpoint is
-//     NEVER snapshotted, including on BFCache/pagehide. Corrupt recovery
-//     snapshots are preserved rather than silently deleted.
 //// DarkPeers BONanza fork created and maintained by T.R.A.V.I.S. for the DarkPeers staff.
 // Further development and maintenance by Maghuro & M.A.E.S.T.R.O.
 
@@ -301,7 +272,6 @@
     // - MIN_ACTION_GAP_MS blocks ultra-fast repeat triggers (usually bots/double-sends)
     // - REPEAT_COMMAND_COOLDOWNS_MS prevents the same command from being spammed for identical output
     // - strikes increase lockout length for repeat offenders (decays over time)
-    const MAX_GIVEAWAY_MINUTES = 45; // DarkPeers rule: hard total cap from public opening
     const MIN_ACTION_GAP_MS = 900; // ignore triggers faster than this per user
     const ENTRY_FEEDBACK_COOLDOWN_MS = 8000; // throttle duplicate/out-of-range feedback per user
     const STRIKE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
@@ -880,7 +850,7 @@
         maxwinners: { label: "Max Winners", section: "giveaway", description: "Set max scaled winners.", usage: `!maxwinners 1-${MAX_WINNERS}`, requiresGiveaway: true, hostOnly: true,
                      args: [{ name: "count", label: "Max", type: "int", required: true, min: 1, max: MAX_WINNERS, placeholder: "max" }] },
         scale: { label: "Scale", section: "info", description: "Show scaling progress.", usage: "!scale", requiresGiveaway: true },
-        addtime: { label: "Add Time", section: "giveaway", description: "Add minutes (45-minute total cap).", usage: "!addtime <minutes>", requiresGiveaway: true, hostOnly: true,
+        addtime: { label: "Add Time", section: "giveaway", description: "Add giveaway minutes.", usage: "!addtime <minutes>", requiresGiveaway: true, hostOnly: true,
                   args: [{ name: "minutes", label: "Min", type: "int", required: true, min: 1, placeholder: "minutes" }] },
         removetime: { label: "Remove Time", section: "giveaway", description: "Remove giveaway minutes.", usage: "!removetime <minutes>", requiresGiveaway: true, hostOnly: true,
                      args: [{ name: "minutes", label: "Min", type: "int", required: true, min: 1, placeholder: "minutes" }] },
@@ -1203,9 +1173,7 @@
             type="number"
             inputmode="numeric"
             min="1"
-            max="45"
             step="1"
-            title="Maximum giveaway duration: 45 minutes"
             value="5"
             autocomplete="off"
           >
@@ -1466,7 +1434,7 @@
       <li class="section-label">Host or Staff Emergency Commands</li>
       <li class="full-span">
           <code>!time add&nbsp;N&nbsp;/&nbsp;remove&nbsp;N&nbsp;</code>
-          <span class="desc">Adjust remaining minutes (45 min total maximum)</span>
+          <span class="desc">Adjust remaining minutes</span>
       </li>
       <li><code>!rig/!unrig&nbsp;</code>  <span class="desc">Toggle rigging (visual only)</span></li>
       <li><code>!end&nbsp;[host]</code>   <span class="desc">Host: !end. Staff: !end &lt;host&gt;</span></li>
@@ -2364,8 +2332,8 @@ body.host-panel-dragging * {
         remNumInput = document.getElementById("reminderNum");
         reminderEvery = document.getElementById("reminderEvery");
 
-        // Enforce whole-number minutes and DarkPeers' 45-minute maximum in the UI.
-        // The start handler separately validates the value against script/DOM bypasses.
+        // Enforce whole-number minutes in the Time field (no decimals / exponent notation)
+        // (No page refresh required; prevents accidental fractional minutes.)
         (function enforceWholeMinutesOnTimerField() {
             if (!timerInput) return;
 
@@ -2384,12 +2352,10 @@ body.host-panel-dragging * {
                 }
 
                 if (/^\d+$/.test(v)) {
-                    const n = Number(v);
-                    if (Number.isSafeInteger(n) && n >= 1) {
-                        const bounded = String(Math.min(n, MAX_GIVEAWAY_MINUTES));
-                        timerInput.value = bounded;
+                    const n = parseInt(v, 10);
+                    if (Number.isFinite(n) && n >= 1) {
                         timerInput.setCustomValidity("");
-                        lastValid = bounded;
+                        lastValid = v;
                         return;
                     }
                 }
@@ -2812,11 +2778,7 @@ body.host-panel-dragging * {
         if (coinInput && preset.amount) coinInput.value = preset.amount;
         if (startInput && preset.startNum) startInput.value = preset.startNum;
         if (endInput && preset.endNum) endInput.value = preset.endNum;
-        if (timerInput && preset.timer) {
-            const minutes = Number(preset.timer);
-            timerInput.value = Number.isSafeInteger(minutes) && minutes >= 1
-                ? String(Math.min(minutes, MAX_GIVEAWAY_MINUTES)) : "5";
-        }
+        if (timerInput && preset.timer) timerInput.value = preset.timer;
         if (remNumInput && preset.reminders != null) remNumInput.value = preset.reminders;
         if (winnersInput && preset.winners) winnersInput.value = preset.winners;
         if (scaleWinnersToggleInput) {
@@ -2918,108 +2880,36 @@ body.host-panel-dragging * {
     function readActiveGiveawayRawForHost(hostName = "", { migrateLegacy = false } = {}) {
         const requestedHostKey = normalizeUserKey(hostName || getLoggedInUsername());
         const storageKey = getActiveGiveawayStorageKey(requestedHostKey);
-        if (!requestedHostKey || !storageKey) {
-            return { storageKey, raw: null, hasStoredState: false, migratedLegacy: false, readOk: false };
-        }
+        if (!requestedHostKey || !storageKey) return { storageKey, raw: null, migratedLegacy: false };
 
-        // Namespaced recovery never proves the old hostname-wide slot empty.
-        // Both slots may contain distinct settlement evidence for real BON.
-        let hasStoredState = false;
         try {
             const namespacedRaw = localStorage.getItem(storageKey);
-            const hasNamespacedState = namespacedRaw !== null;
-            hasStoredState = hasNamespacedState;
-            const namespacedResult = {
-                storageKey, raw: namespacedRaw, hasStoredState: hasNamespacedState,
-                migratedLegacy: false, readOk: true
-            };
+            if (namespacedRaw) return { storageKey, raw: namespacedRaw, migratedLegacy: false };
 
-            // Rehearsal is isolated from the LIVE legacy recovery key.
-            if (REHEARSAL_MODE) return namespacedResult;
-
+            // Backwards-compatible migration from pre-v1.3.24 hostname-wide storage.
+            // A legacy snapshot belonging to another account is deliberately left
+            // untouched; the current account now has its own namespace and cannot
+            // overwrite that foreign recovery state. Rehearsal storage never
+            // imports a live legacy snapshot.
+            if (REHEARSAL_MODE) {
+                return { storageKey, raw: null, migratedLegacy: false };
+            }
             const legacyRaw = localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY);
-            // Only null means absent, even if the current namespace is occupied.
-            if (legacyRaw === null) return namespacedResult;
-            hasStoredState = true;
+            if (!legacyRaw) return { storageKey, raw: null, migratedLegacy: false };
 
             const legacy = JSON.parse(legacyRaw);
-            const legacyHost = legacy?.giveawayData?.host;
-            // Reject non-string host identities rather than coercing a
-            // malicious/broken array, object or number into a username.
-            const legacyHostKey = typeof legacyHost === "string"
-                ? normalizeUserKey(legacyHost) : "";
-
-            if (!legacyHostKey) {
-                console.warn("[BON Giveaway] Unidentified legacy recovery is occupied; manual review required.");
-                return {
-                    storageKey, raw: legacyRaw, hasStoredState: true,
-                    migratedLegacy: false, readOk: false
-                };
+            const legacyHostKey = normalizeUserKey(legacy?.giveawayData?.host);
+            if (!legacyHostKey || legacyHostKey !== requestedHostKey) {
+                return { storageKey, raw: null, migratedLegacy: false };
             }
 
-            if (legacyHostKey !== requestedHostKey) {
-                // Only a positively identified different host can be ignored.
-                return namespacedResult;
-            }
-
-            if (hasNamespacedState) {
-                // Same host is NOT the same settlement. A stale copy can
-                // omit already-paid ledger entries. Never auto-restore while
-                // conflicting same-host records are present.
-                if (namespacedRaw !== legacyRaw) {
-                    console.warn("[BON Giveaway] Conflicting same-host recovery slots; manual review required.");
-                    return {
-                        storageKey, raw: namespacedRaw, hasStoredState: true,
-                        migratedLegacy: false, readOk: false
-                    };
-                }
-                if (migrateLegacy) {
-                    // Both records were byte-identical. Under the exclusive
-                    // restore lock, retire the redundant old copy BEFORE
-                    // a pending -> confirmed write can make it conflict.
-                    // Verify BOTH values are unchanged before deletion.
-                    if (localStorage.getItem(storageKey) !== namespacedRaw ||
-                        localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== legacyRaw) {
-                        throw new Error("Duplicate recovery state changed before cleanup");
-                    }
-                    localStorage.removeItem(LS_ACTIVE_GIVEAWAY_LEGACY);
-                    if (localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== null) {
-                        throw new Error("Duplicate legacy recovery cleanup not confirmed");
-                    }
-                }
-                return namespacedResult;
-            }
-
-            // Only the locked restore path migrates the single identified
-            // legacy record. Never delete it before read-back confirmation.
             if (migrateLegacy) {
                 localStorage.setItem(storageKey, legacyRaw);
-                if (localStorage.getItem(storageKey) !== legacyRaw) {
-                    throw new Error("Legacy migration read-back mismatch");
-                }
-                // A successful write alone is not a completed migration.
-                // Confirm the legacy key really disappeared BEFORE any
-                // checkpoint mutation can diverge the two same-host copies.
-                // If removal is denied or silently ignored, fail closed.
-                if (localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== legacyRaw) {
-                    throw new Error("Legacy recovery changed before removal");
-                }
                 localStorage.removeItem(LS_ACTIVE_GIVEAWAY_LEGACY);
-                if (localStorage.getItem(LS_ACTIVE_GIVEAWAY_LEGACY) !== null) {
-                    throw new Error("Single-slot legacy migration cleanup not confirmed");
-                }
             }
-            return {
-                storageKey, raw: legacyRaw, hasStoredState: true,
-                migratedLegacy: !!migrateLegacy, readOk: true
-            };
-        } catch (error) {
-            // Storage or JSON failure is NOT evidence of vacant recovery.
-            console.warn("[BON Giveaway] Active recovery storage read failed:", error);
-            return {
-                storageKey, raw: null, hasStoredState,
-                migratedLegacy: false, readOk: false
-            };
+            return { storageKey, raw: legacyRaw, migratedLegacy: !!migrateLegacy };
+        } catch {
+            return { storageKey, raw: null, migratedLegacy: false };
         }
     }
 
@@ -3243,13 +3133,7 @@ body.host-panel-dragging * {
      * Called at key mutation points (new entry, start, addbon, sponsor, time adjust).
      */
     function snapshotGiveaway({ force = false, verifyWrite = false } = {}) {
-        // Preflight state exists only in memory while balance, Gift History and
-        // chat cursor checks run. Never persist it as a legacy giveaway when
-        // pagehide/unload fires BEFORE the opening checkpoint is saved.
-        const proof = giveawayData?.openingCheckpoint;
-        if (!giveawayData ||
-            !proof || (proof.status !== "pending" && proof.status !== "confirmed") ||
-            !canMutateActiveGiveaway() || (giveawayData.__ending && !force)) return false;
+        if (!giveawayData || !canMutateActiveGiveaway() || (giveawayData.__ending && !force)) return false;
         try {
             const snapshot = {
                 giveawayData: {
@@ -3261,12 +3145,6 @@ body.host-panel-dragging * {
                     totalEntries: giveawayData.totalEntries,
                     winningNumber: giveawayData.winningNumber,
                     totalSeconds: giveawayData.totalSeconds,
-                    openedAt: giveawayData.openedAt,
-                    // Deadline and sponsor-window boundaries are different.
-                    sponsorStartTs: giveawayData.sponsorStartTs,
-                    openingCheckpoint: giveawayData.openingCheckpoint &&
-                        typeof giveawayData.openingCheckpoint === "object"
-                            ? { ...giveawayData.openingCheckpoint } : null,
                     endTs: giveawayData.endTs,
                     winnersNum: giveawayData.winnersNum,
                     baseWinnersAtStart: giveawayData.baseWinnersAtStart,
@@ -3312,8 +3190,6 @@ body.host-panel-dragging * {
                     lastMsgId: Math.max(0, Math.floor(Number(window.__activeTracker.lastMsgId) || 0)),
                     cursorInitialized: !!window.__activeTracker.cursorInitialized,
                     giftHistoryClockOffsetMs: optionalFiniteNumber(window.__activeTracker.giftHistoryClockOffsetMs),
-                    giftHistoryClockOffsetUncertaintyMs:
-                        optionalFiniteNumber(window.__activeTracker.giftHistoryClockOffsetUncertaintyMs),
                     giftHistoryInitialized: !!window.__activeTracker.giftHistoryInitialized,
                     giftHistorySeenKeys: Array.from(window.__activeTracker.giftHistorySeenKeys || []).slice(-250),
                     historyFallbackActive: !!window.__activeTracker.historyFallbackActive,
@@ -3386,13 +3262,7 @@ body.host-panel-dragging * {
             const loggedInHostKey = normalizeUserKey(getLoggedInUsername());
             if (!loggedInHostKey) return null;
 
-            // UI bootstrap runs BEFORE Web Lock acquisition: never migrate or
-            // remove legacy keys here. Only the post-lock restore read may do so.
-            const stored = readActiveGiveawayRawForHost(loggedInHostKey, { migrateLegacy: false });
-            if (!stored.readOk) {
-                console.warn("[BON Giveaway] Recovery storage unreadable; leaving any existing state untouched.");
-                return null;
-            }
+            const stored = readActiveGiveawayRawForHost(loggedInHostKey, { migrateLegacy: true });
             if (!stored.raw) return null;
             const snap = JSON.parse(stored.raw);
             if (!snap || !snap.giveawayData) return null;
@@ -3411,75 +3281,14 @@ body.host-panel-dragging * {
                 return null;
             }
 
-            // Pre-checkpoint releases never proved that an opening reached
-            // Main Chat, and their startTime was recorded AFTER the send.
-            // Preserve the original raw snapshot, including old/expired and
-            // partially-paid records, but NEVER auto-resume or auto-settle it.
-            // Rewriting its 45-minute deadline from that late startTime would
-            // also violate the absolute public-opening cap.
-            const checkpoint = snap.giveawayData.openingCheckpoint;
-            if (!checkpoint || (
-                checkpoint.status !== "pending" &&
-                checkpoint.status !== "confirmed"
-            ) || (
-                checkpoint.status === "confirmed" &&
-                (!Number.isFinite(Number(snap.giveawayData.openedAt)) ||
-                 Number(snap.giveawayData.openedAt) <= 0 ||
-                 !Number.isFinite(Number(snap.giveawayData.sponsorStartTs)) ||
-                 Number(snap.giveawayData.sponsorStartTs) <
-                     Number(snap.giveawayData.openedAt))
-            )) {
-                console.warn(
-                    "[BON Giveaway] Unverified legacy opening retained for manual review; " +
-                    "automatic resume, deadline migration and BON settlement are blocked."
-                );
-                snap.__legacyOpeningUnverified = true;
-                return snap;
-            }
-
             const endTs = Number(snap.giveawayData.endTs);
             if (!Number.isFinite(endTs) || endTs <= 0) {
-                // Invalid saved data can reflect an incomplete write or an
-                // in-progress payout. Preserve it for manual inspection;
-                // never erase potentially recoverable settlement evidence.
-                console.warn("[BON Giveaway] Invalid saved deadline; snapshot preserved for manual recovery.");
+                clearGiveawaySnapshot();
                 return null;
             }
 
-            // An older release may have saved a deadline beyond the DarkPeers cap.
-            // Restrict only an uncommitted draw: committed settlement timestamps
-            // are immutable and must survive crash/reload unchanged.
-            const startTs = Number(snap.giveawayData.openedAt ?? snap.startTime);
-            const maxEndTs = getGiveawayMaxEndTs(startTs);
+            const overdueMs = Date.now() - endTs;
             const committedSettlement = snap.giveawayData?.settlement?.committed === true;
-            const correctedDeadline = !committedSettlement && maxEndTs !== null && endTs > maxEndTs;
-            if (correctedDeadline) {
-                snap.giveawayData.endTs = maxEndTs;
-
-                // Legacy reminder offsets belong to the *old* deadline. Rebuild
-                // them against the capped original duration, preserving the
-                // configured reminder count. countdownTimer/nextReminderMs will
-                // discard thresholds already elapsed without replaying them.
-                const requestedReminders = Number(snap.giveawayData.reminderNum);
-                const reminderCount = Number.isFinite(requestedReminders)
-                    ? Math.max(0, Math.min(
-                        Math.floor(requestedReminders),
-                        getReminderLimits(MAX_GIVEAWAY_MINUTES)[0]
-                    ))
-                    : 0;
-                snap.giveawayData.reminderSchedule = getReminderSchedule(MAX_GIVEAWAY_MINUTES, reminderCount);
-                snap.giveawayData.reminderNum = reminderCount;
-                const cadenceSec = reminderCount > 0
-                    ? MAX_GIVEAWAY_MINUTES * 60 / (reminderCount + 1)
-                    : 0;
-                snap.giveawayData.reminderFreqSec = cadenceSec;
-                snap.giveawayData.nextReminderSec = cadenceSec;
-                snap.giveawayData.totalSeconds = MAX_GIVEAWAY_MINUTES * 60;
-                console.warn("[BON Giveaway] Recovered deadline and reminder schedule capped at 45 minutes after public opening.");
-            }
-            // Apply the normal one-hour restore grace to the *capped* deadline.
-            // Otherwise ancient giveaways could unexpectedly resume settlement.
-            const overdueMs = Date.now() - Number(snap.giveawayData.endTs);
             const closingSettlementLatched =
                 snap.giveawayData?.closingIntent === true ||
                 snap.giveawayData?.closingNoticeSent === true ||
@@ -3488,16 +3297,11 @@ body.host-panel-dragging * {
             if (
                 overdueMs > EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS &&
                 !committedSettlement &&
-                !closingSettlementLatched &&
-                snap.giveawayData?.openingCheckpoint?.status !== "pending"
+                !closingSettlementLatched
             ) {
-                // This loader also runs BEFORE acquiring the Web Lock.
-                // Deleting a stale recovery slot here could erase another
-                // tab's in-progress settlement or manual recovery evidence.
-                // Preserve it and block auto-resume, never clear it on read.
-                console.warn("[BON Giveaway] Expired active snapshot preserved for manual review; automatic settlement grace exceeded.");
-                snap.__expiredBeyondGrace = true;
-                return snap;
+                console.warn("[BON Giveaway] Discarding stale expired active snapshot; automatic settlement grace exceeded.");
+                clearGiveawaySnapshot();
+                return null;
             }
 
             // Once settlement is committed OR the closing latch has been persisted,
@@ -3506,11 +3310,8 @@ body.host-panel-dragging * {
             // active-giveaway grace window.
             snap.__expiredAtLoad = overdueMs >= 0 || closingSettlementLatched;
             return snap;
-        } catch (error) {
-            // Malformed or temporarily unreadable snapshots must not be
-            // silently discarded; a subsequent clean read or manual analysis
-            // may be needed to prevent lost or duplicate BON payouts.
-            console.warn("[BON Giveaway] Unable to parse recovery snapshot; retaining stored data:", error);
+        } catch {
+            clearGiveawaySnapshot();
             return null;
         }
     }
@@ -3606,22 +3407,21 @@ body.host-panel-dragging * {
     }
 
     async function restoreGiveawayFromSnapshot(snap) {
-        // The earlier snapshot is only a discovery hint. Another tab may
-        // persist a newer settlement while we await the Web Lock. Classify
-        // recovery status, expiry, checkpoint and host ONLY after rereading
-        // the latest saved state under exclusive ownership.
-        if (!snap) return false;
+        if (!snap || !snap.giveawayData) return false;
 
         // Validate the live DarkPeers identity/Main Chat context BEFORE claiming
         // ownership or touching the recoverable snapshot. A transient/wrong chat
         // context must never destroy or mutate persisted giveaway state.
         cacheChatContext();
         const restoreHost = getLoggedInUsername();
+        const restoreExpectedHost = String(snap.giveawayData.host || "").trim();
         const restoreUserId = Math.floor(Number(OT_USER_ID));
         const restorePublicRoom = Math.floor(Number(OT_CHATROOM_ID));
         const restoreExpectedRoom = Math.floor(Number(DARKPEERS_MAIN_CHATROOM_ID));
         const restoreContextOk =
             !!restoreHost &&
+            !!restoreExpectedHost &&
+            normalizeUserKey(restoreHost) === normalizeUserKey(restoreExpectedHost) &&
             Number.isFinite(restoreUserId) &&
             restoreUserId > 0 &&
             Number.isFinite(restorePublicRoom) &&
@@ -3633,6 +3433,7 @@ body.host-panel-dragging * {
                 "[BON Giveaway] Restore deferred: DarkPeers identity/Main Chat context is not trustworthy.",
                 {
                     restoreHost,
+                    expectedHost: restoreExpectedHost,
                     userId: restoreUserId,
                     publicRoom: restorePublicRoom,
                     expectedRoom: restoreExpectedRoom,
@@ -3656,135 +3457,8 @@ body.host-panel-dragging * {
         }
 
         try {
-            // The caller's snap was read before awaiting the Web Lock.
-            // Another tab may have committed/persisted payout state while we
-            // were queued, then released its lock. Never restore that stale
-            // object and overwrite newer payout/checkpoint information.
-            // Refresh storage and re-apply all current restore validation
-            // WHILE holding exclusive ownership.
-            const lockedRead = readActiveGiveawayRawForHost(restoreHost, {
-                migrateLegacy: true
-            });
-            if (!ownsTabLock() || !lockedRead.readOk ||
-                !lockedRead.hasStoredState || !lockedRead.raw) {
-                console.warn("[BON Giveaway] Restore blocked: recovery storage changed or could not be read under lock.");
-                releaseTabLock();
-                return false;
-            }
-            const lockedSnapshot = loadGiveawaySnapshot();
-            if (!ownsTabLock() || !lockedSnapshot ||
-                lockedSnapshot.__legacyOpeningUnverified === true ||
-                lockedSnapshot.__expiredBeyondGrace === true ||
-                !lockedSnapshot.giveawayData ||
-                normalizeUserKey(lockedSnapshot.giveawayData.host) !==
-                    normalizeUserKey(restoreHost) ||
-                (lockedSnapshot.giveawayData.rehearsalMode === true) !== REHEARSAL_MODE) {
-                console.warn("[BON Giveaway] Restore blocked: locked snapshot is absent, unverified or belongs to another mode/host.");
-                if (lockedSnapshot?.__legacyOpeningUnverified === true ||
-                    lockedSnapshot?.__expiredBeyondGrace === true) {
-                    window.alert(
-                        "GIVEAWAY RECOVERY REQUIRES MANUAL REVIEW: The latest saved state " +
-                        "cannot safely resume entries or BON settlement. " +
-                        "The original recovery data has been preserved."
-                    );
-                }
-                releaseTabLock();
-                return false;
-            }
-            snap = lockedSnapshot;
-
-            // Local storage alone is not authoritative evidence of a public
-            // opening. For a previously confirmed LIVE giveaway, prove that
-            // the exact original message ID/host/text/timestamp still exists
-            // in Main Chat before restoring entries, pot or settlement. The
-            // verifier checks the original bounded POST window and cursor.
-            const restoredCheckpoint = snap.giveawayData?.openingCheckpoint;
-            if (!REHEARSAL_MODE && restoredCheckpoint?.status === "confirmed") {
-                const verified = await verifyPendingGiveawayOpening(restoredCheckpoint);
-                const savedSponsorStart = optionalFiniteNumber(
-                    snap.giveawayData.sponsorStartTs
-                );
-                if (!verified ||
-                    verified.messageId !== optionalFiniteNumber(restoredCheckpoint.messageId) ||
-                    savedSponsorStart === null ||
-                    verified.sponsorStartTs !== savedSponsorStart) {
-                    logEvent("Confirmed opening recovery deferred",
-                        "Authoritative Main Chat could not reprove the exact saved opening and sponsor boundary.");
-                    window.alert(
-                        "GIVEAWAY RECOVERY PAUSED: The saved opening could not " +
-                        "be verified again against Main Chat. No entries, " +
-                        "sponsor updates or BON settlement will be resumed."
-                    );
-                    releaseTabLock();
-                    return false;
-                }
-            }
-
-            // An opening may have reached Main Chat even if its POST response was
-            // lost. It was durably checkpointed BEFORE sending; never resume
-            // entries, sponsor accounting or settlement until the exact public
-            // opening is verified from authoritative chat history.
-            if (snap.giveawayData?.openingCheckpoint?.status === "pending") {
-                const verified = await verifyPendingGiveawayOpening(
-                    snap.giveawayData.openingCheckpoint
-                );
-                if (!verified) {
-                    logEvent("Opening recovery deferred",
-                        "Main Chat could not prove the uncertain opening; existing checkpoint preserved.");
-                    window.alert(
-                        "GIVEAWAY RECOVERY PAUSED: The public opening could not be verified. " +
-                        "No giveaway settlement or BON transfer will run. Retry from Main Chat later."
-                    );
-                    releaseTabLock();
-                    return false;
-                }
-
-                // Never resurrect a very old uncertain opening into automatic
-                // settlement. A human must investigate after recovery grace.
-                const overdue = Date.now() - Number(snap.giveawayData.endTs);
-                if (overdue > EXPIRED_SNAPSHOT_SETTLEMENT_GRACE_MS) {
-                    logEvent("Opening recovery requires manual review",
-                        "Opening verified but its automatic settlement grace has expired.");
-                    window.alert(
-                        "GIVEAWAY RECOVERY PAUSED: An old public opening was verified, " +
-                        "but automatic settlement is unsafe after the recovery grace. " +
-                        "Keep the saved recovery state for manual review."
-                    );
-                    releaseTabLock();
-                    return false;
-                }
-
-                snap.giveawayData.sponsorStartTs = verified.sponsorStartTs;
-                snap.giveawayData.openingCheckpoint.status = "confirmed";
-                snap.giveawayData.openingCheckpoint.messageId = verified.messageId;
-                // Persist the verified boundary before any sponsor reconciliation.
-                // Do not call snapshotGiveaway yet: entries haven't been restored
-                // into memory, so serializing them now would overwrite recovery.
-                const storageKey = getActiveGiveawayStorageKey(snap.giveawayData.host);
-                if (!storageKey) {
-                    releaseTabLock();
-                    return false;
-                }
-                const persisted = { ...snap };
-                delete persisted.__expiredAtLoad;
-                const verifiedRaw = JSON.stringify(persisted);
-                try {
-                    localStorage.setItem(storageKey, verifiedRaw);
-                    if (localStorage.getItem(storageKey) !== verifiedRaw) {
-                        throw new Error("Verified opening checkpoint read-back mismatch");
-                    }
-                } catch (error) {
-                    console.warn("[BON Giveaway] Could not persist verified opening:", error);
-                    releaseTabLock();
-                    return false;
-                }
-            }
-
             // 1) Restore giveaway data
             giveawayData = snap.giveawayData;
-            const restoredOpenTs = Number(giveawayData.openedAt ?? snap.startTime);
-            giveawayData.openedAt = getGiveawayMaxEndTs(restoredOpenTs) !== null
-                ? restoredOpenTs : null;
 
             // Restore starts fail-closed for sponsor accounting. Entries and time
             // may resume, but BON mutation and settlement stay blocked until the
@@ -3906,19 +3580,11 @@ body.host-panel-dragging * {
             updateRigToggleUI();
 
             // 4) Restore start time
-            giveawayStartTime = giveawayData.openedAt !== null
-                ? new Date(giveawayData.openedAt) : new Date();
+            giveawayStartTime = snap.startTime ? new Date(snap.startTime) : new Date();
 
             lastKnownGiveawayHostKey = normUserKey(giveawayData.host) || lastKnownGiveawayHostKey;
 
-            // 5) Lock form fields. Keep the restored reminder count reflected
-            // in the UI: a later !addtime/!removetime rebuilds from this field.
-            if (remNumInput) {
-                const savedReminderCount = Number(giveawayData.reminderNum);
-                remNumInput.value = String(Number.isFinite(savedReminderCount)
-                    ? Math.max(0, Math.min(MAX_REMINDERS, Math.floor(savedReminderCount)))
-                    : 0);
-            }
+            // 5) Lock form fields
             startButton.disabled = false;
             coinInput.disabled = true;
             startInput.disabled = true;
@@ -3986,17 +3652,12 @@ body.host-panel-dragging * {
             const savedTracker = (snap.sponsorTracker && typeof snap.sponsorTracker === "object") ? snap.sponsorTracker : null;
             const tracker = new SponsorTracker({
                 chatroomId,
-                giveawayStartTime: new Date(
-                    giveawayData.sponsorStartTs ?? giveawayStartTime.getTime()
-                ),
+                giveawayStartTime,
                 giveawayData,
                 lastMsgId: savedTracker ? savedTracker.lastMsgId : 0,
                 cursorInitialized: savedTracker ? !!savedTracker.cursorInitialized : false,
                 giftHistoryClockOffsetMs: savedTracker
                     ? optionalFiniteNumber(savedTracker.giftHistoryClockOffsetMs)
-                    : null,
-                giftHistoryClockOffsetUncertaintyMs: savedTracker
-                    ? optionalFiniteNumber(savedTracker.giftHistoryClockOffsetUncertaintyMs)
                     : null,
                 giftHistoryInitialized: savedTracker ? !!savedTracker.giftHistoryInitialized : false,
                 giftHistorySeenKeys: savedTracker && Array.isArray(savedTracker.giftHistorySeenKeys)
@@ -4194,100 +3855,6 @@ body.host-panel-dragging * {
     // SECTION 6: Giveaway Lifecycle
     // ───────────────────────────────────────────────────────────
 
-    // The opening POST has a 7s HTTP timeout. Allow limited transport overhead
-    // for recovering an ambiguous result, but NEVER accept an announcement
-    // sent minutes/hours later as this giveaway's opening.
-    const OPENING_POST_MAX_PUBLICATION_WINDOW_MS = 10000;
-
-    // Reconcile an opening announcement against authoritative Main Chat history.
-    // An HTTP timeout is NOT evidence the server rejected the POST. Never
-    // release a pending opening snapshot merely because sendMessage returned
-    // false; an announced giveaway may already exist publicly.
-    async function verifyPendingGiveawayOpening(checkpoint) {
-        if (!checkpoint ||
-            (checkpoint.status !== "pending" && checkpoint.status !== "confirmed") ||
-            !checkpoint.preparedMessage || !Number.isFinite(Number(checkpoint.startedAt))) {
-            return null;
-        }
-
-        const afterId = optionalFiniteNumber(checkpoint.afterMessageId);
-        // A missing pre-send cursor makes same-second identical announcements
-        // indistinguishable. Never auto-confirm such a snapshot or payout.
-        if (!Number.isSafeInteger(afterId) || afterId <= 0) return null;
-        const startedAt = Number(checkpoint.startedAt);
-        const persistedHardEnd = optionalFiniteNumber(checkpoint.windowEndAt);
-        const completedAt = optionalFiniteNumber(checkpoint.sendCompletedAt);
-        const absoluteHardEnd = startedAt + OPENING_POST_MAX_PUBLICATION_WINDOW_MS;
-        // An absent completion time means the tab may have crashed mid-POST:
-        // the pre-persisted hard window is still authoritative. A recorded
-        // completion can only NARROW the window, never extend it.
-        const windowEnd = Math.min(
-            absoluteHardEnd,
-            persistedHardEnd === null ? absoluteHardEnd : persistedHardEnd,
-            completedAt === null ? absoluteHardEnd : completedAt
-        );
-        if (!Number.isFinite(startedAt) || !Number.isFinite(windowEnd) ||
-            windowEnd <= startedAt) return null;
-        const senderId = Math.floor(Number(OT_USER_ID));
-        if (!Number.isFinite(senderId) || senderId <= 0) return null;
-
-        for (let attempt = 0; attempt < 3; attempt++) {
-            if (!ownsTabLock()) return null;
-            try {
-                const url = new URL(`/api/chat/messages/${DARKPEERS_MAIN_CHATROOM_ID}`, location.origin);
-                if (afterId !== null) url.searchParams.set("after_id", String(afterId));
-                const response = await fetchWithTimeout(
-                    url, { credentials: "include", cache: "no-store" }, 5000
-                );
-                if (!ownsTabLock()) return null;
-                if (!response?.ok) throw new Error("Opening verification chat read failed");
-                const payload = await response.json();
-                if (!ownsTabLock()) return null;
-                if (!Array.isArray(payload?.data)) throw new Error("Malformed Main Chat messages");
-
-                for (const message of payload.data) {
-                    const id = optionalFiniteNumber(message?.id);
-                    if (!Number.isSafeInteger(id) || id <= afterId) continue;
-                    // A confirmed checkpoint must identify the SAME original
-                    // announcement after reload. Never replace it with a later
-                    // identical post, even inside the bounded send window.
-                    if (checkpoint.status === "confirmed" &&
-                        id !== optionalFiniteNumber(checkpoint.messageId)) continue;
-                    const authorId = Math.floor(Number(message?.user_id ?? message?.user?.id));
-                    if (authorId !== senderId) continue;
-                    if (String(message?.message ?? "") !== checkpoint.preparedMessage) continue;
-
-                    const rawTs = String(message?.created_at || "");
-                    const timestamp = Date.parse(rawTs);
-                    const resolutionMs = unit3dTimestampResolutionMs(rawTs);
-                    // Require the ENTIRE server timestamp bucket to be inside
-                    // the original, bounded opening POST window. A bucket that
-                    // overlaps the pre-send boundary is ambiguous and must not
-                    // confirm an unrelated same-second message. An identical
-                    // message sent after this attempt cannot confirm it either.
-                    if (!Number.isFinite(timestamp) ||
-                        !Number.isFinite(resolutionMs) || resolutionMs <= 0 ||
-                        timestamp < startedAt ||
-                        (timestamp + resolutionMs) > windowEnd) continue;
-
-                    return {
-                        messageId: id,
-                        // Exclude the entire potentially ambiguous publication
-                        // timestamp bucket from sponsorship. The 45-minute
-                        // deadline remains anchored to the earlier send start.
-                        sponsorStartTs: Math.max(startedAt, timestamp + resolutionMs)
-                    };
-                }
-            } catch (error) {
-                console.warn("[BON Giveaway] Opening reconciliation deferred:", error);
-            }
-            if (attempt < 2) {
-                await new Promise(resolve => setTimeout(resolve, 700));
-            }
-        }
-        return null;
-    }
-
     async function startGiveaway() {
         clearWinnersStatusUI();
 
@@ -4297,55 +3864,9 @@ body.host-panel-dragging * {
             return;
         }
 
-        // Validate in code, not just through the HTML max attribute: DevTools,
-        // presets or scripted property changes cannot start a longer giveaway.
-        const totalTimeMin = parseGiveawayMinutes(timerInput?.value);
-        if (totalTimeMin === null) {
-            window.alert(`DarkPeers giveaways must last between 1 and ${MAX_GIVEAWAY_MINUTES} whole minutes.`);
-            timerInput?.focus();
-            return;
-        }
-
         if (!giveawayForm.checkValidity()) {
             giveawayForm.reportValidity();
             return;
-        }
-
-        // Never overwrite a recoverable opening whose public POST was ambiguous.
-        // The pending snapshot is the only path to reconcile entrants/sponsors
-        // after a reload. A second start could otherwise destroy that evidence.
-        // Pre-lock validation is read-only. Any migration of a legacy key
-        // happens only after exclusive ownership has been acquired.
-        const prior = readActiveGiveawayRawForHost(getLoggedInUsername(), {
-            migrateLegacy: false
-        });
-        // localStorage failures must block starts, never look like absence.
-        if (!prior.readOk || !prior.storageKey) {
-            window.alert("GIVEAWAY START BLOCKED: Cannot read recovery storage reliably. No opening was posted.");
-            return;
-        }
-        if (prior.hasStoredState) {
-            try {
-                const saved = JSON.parse(prior.raw);
-                const proof = saved?.giveawayData?.openingCheckpoint;
-                if (saved?.giveawayData && (!proof || proof.status !== "confirmed" ||
-                    !Number.isFinite(Number(saved.giveawayData.openedAt)) ||
-                    Number(saved.giveawayData.openedAt) <= 0 ||
-                    !Number.isFinite(Number(saved.giveawayData.sponsorStartTs)) ||
-                    Number(saved.giveawayData.sponsorStartTs) <
-                        Number(saved.giveawayData.openedAt))) {
-                    window.alert(
-                        "GIVEAWAY START BLOCKED: A saved opening still requires " +
-                        "verification or manual review. The original recovery " +
-                        "snapshot must not be overwritten by a new giveaway."
-                    );
-                    return;
-                }
-            } catch {
-                // Unknown existing recovery data must not be overwritten.
-                window.alert("GIVEAWAY START BLOCKED: Existing recovery data could not be read safely.");
-                return;
-            }
         }
 
         clearGiveawayLog();
@@ -4378,26 +3899,6 @@ body.host-panel-dragging * {
         // another tab: that is the primary cross-tab double-payout defence.
         if (!await acquireTabLock()) {
             window.alert("Could not acquire exclusive giveaway ownership. Another DarkPeers tab may already be running a giveaway, or this browser does not provide the Web Locks safety API.");
-            return;
-        }
-
-        // The check above ran BEFORE ownership was acquired. Two tabs can
-        // both see empty storage; the second may acquire the lock only after
-        // the first has posted (or checkpointed) an ambiguous opening. Read
-        // storage AGAIN while owning the lock. Any remaining snapshot is
-        // recoverable state and must not be replaced by a second opening.
-        const savedAfterLock = readActiveGiveawayRawForHost(getLoggedInUsername(), {
-            migrateLegacy: true
-        });
-        if (!savedAfterLock.readOk || savedAfterLock.hasStoredState || !savedAfterLock.storageKey) {
-            logEvent("Start blocked (post-lock recovery recheck)",
-                "Saved giveaway state appeared while awaiting the exclusive lock; no new opening was posted.");
-            window.alert(
-                "GIVEAWAY START BLOCKED: A previous giveaway was saved while " +
-                "waiting for this tab's lock. Recover or resolve it before " +
-                "starting another. No new opening has been posted."
-            );
-            releaseTabLock();
             return;
         }
 
@@ -4456,7 +3957,8 @@ body.host-panel-dragging * {
         //startButton.parentElement.hidden = true;
         entriesWrapper.hidden = false;
 
-        const totalTimeMs = totalTimeMin * 60000;
+        let totalTimeMin = totalMinutes();
+        let totalTimeMs = totalTimeMin * 60000;
         let reminderNum = Math.min(Number(remNumInput.value), getReminderLimits(totalTimeMin)[0]);
         if (isNaN(reminderNum) || reminderNum < 0) reminderNum = 0;
         const schedule = getReminderSchedule(totalTimeMin, reminderNum);
@@ -4489,7 +3991,6 @@ body.host-panel-dragging * {
             totalEntries: parseInt(endInput.value, 10) - parseInt(startInput.value, 10) + 1,
             winningNumber: null,
             totalSeconds: totalTimeMs / 1000,
-            openedAt: null,
             timeLeft: totalTimeMs / 1000,
             endTs: Date.now() + (totalTimeMs),
             winnersNum,
@@ -4515,9 +4016,6 @@ body.host-panel-dragging * {
 
         updateRigToggleUI();
         const currentBon = await getVerifiedHostBalance({ requireServer: true, maxAgeMs: 0 });
-        // A pagehide while preflight was awaiting balance invalidates this
-        // document. Don't continue into the public opening workflow.
-        if (!ownsTabLock()) return;
 
         if (currentBon == null) {
             const startErr = "Unable to verify current BON balance.";
@@ -4604,7 +4102,6 @@ body.host-panel-dragging * {
                 giveawayData
             });
             const sponsorBaselineReady = await tracker.bootstrapGiftHistory();
-            if (!ownsTabLock()) return;
             if (!sponsorBaselineReady) {
                 logEvent(
                     "Start aborted (Gift History baseline)",
@@ -4618,123 +4115,37 @@ body.host-panel-dragging * {
                 return;
             }
 
-            // Read a Main Chat cursor BEFORE preparing the durable checkpoint.
-            // UNIT3D may ignore after_id; the verifier also filters by author,
-            // exact prepared message and publication-time window.
-            const afterMessageId = REHEARSAL_MODE
-                ? null : await getLatestChatMessageId(DARKPEERS_MAIN_CHATROOM_ID);
-            if (!ownsTabLock()) return;
-            if (!REHEARSAL_MODE &&
-                (!Number.isSafeInteger(afterMessageId) || afterMessageId <= 0)) {
-                logEvent("Opening blocked (Main Chat cursor)",
-                    "Unable to obtain a trustworthy pre-send Main Chat message ID. No opening was posted.");
-                window.alert(
-                    "GIVEAWAY ERROR: Cannot verify the latest Main Chat message. " +
-                    "Nothing has been posted. Please try again when DarkPeers is responding."
-                );
-                resetGiveaway();
-                return;
-            }
-
-            // Deadline: conservative PRE-SEND time. Sponsorship: independently
-            // verified PUBLICATION time (never the earlier request timestamp).
-            const openingSendStartedAt = Date.now();
-            const preparedOpening = prepareOutgoingMessage(introMessage);
-            giveawayStartTime = new Date(openingSendStartedAt);
-            giveawayData.openedAt = openingSendStartedAt;
-            giveawayData.endTs = openingSendStartedAt + totalTimeMs;
-            giveawayData.__sponsorAccountingVerified = false;
-            giveawayData.openingCheckpoint = {
-                status: "pending",
-                startedAt: openingSendStartedAt,
-                afterMessageId,
-                windowEndAt: openingSendStartedAt + OPENING_POST_MAX_PUBLICATION_WINDOW_MS,
-                preparedMessage: preparedOpening
-            };
-            window.__activeTracker = tracker;
-            // If this write/read-back fails, DO NOT send anything publicly.
-            if (!snapshotGiveaway({ force: true, verifyWrite: true })) {
-                logEvent("Opening blocked", "Could not persist the opening checkpoint before posting.");
-                window.alert("GIVEAWAY ERROR: Unable to save the opening recovery checkpoint. No message was sent.");
-                resetGiveaway();
-                return;
-            }
-
-            const introSent = await sendMessage(preparedOpening, {
-                prepared: true,
-                requireExclusiveGiveawayOwnership: true,
-                noFallbackOnApiException: true
+            const introSent = await sendMessage(introMessage, {
+                requireExclusiveGiveawayOwnership: true
             });
-            if (!ownsTabLock()) return;
-            // Constrain reconciliation to the ACTUAL time of completion if
-            // this document survived the POST. If it did not, recovery uses
-            // the previously persisted bounded upper limit instead.
-            giveawayData.openingCheckpoint.sendCompletedAt = Date.now();
-            if (!snapshotGiveaway({ force: true, verifyWrite: true })) {
-                logEvent("Opening delivery checkpoint not durable",
-                    "Could not preserve the end of the opening attempt; recovery remains pending.");
-                window.alert("GIVEAWAY OPENING PAUSED: Delivery timing could not be stored. Reload to retry verification.");
-                releaseTabLock();
-                return;
-            }
-
-            // Rehearsal announcements deliberately go to a private host message;
-            // real openings require authoritative Main Chat confirmation.
-            const verifiedOpening = introSent !== false && REHEARSAL_MODE
-                ? { messageId: null, sponsorStartTs: openingSendStartedAt }
-                : await verifyPendingGiveawayOpening(giveawayData.openingCheckpoint);
-
-            if (!verifiedOpening) {
-                logEvent("Opening unconfirmed (checkpoint retained)",
-                    "Main Chat publication could not be verified; payout and sponsor tracking remain disabled until recovery verifies the exact opening.");
+            if (introSent === false) {
+                logEvent(
+                    "Start aborted (opening announcement)",
+                    "The public opening message could not be accepted for sending. Timers, entries and sponsor tracking were not started."
+                );
                 window.alert(
-                    "GIVEAWAY OPENING UNCONFIRMED: The opening message might already be public. " +
-                    "A recovery checkpoint was saved. Reload Main Chat to retry verification. " +
-                    "Do NOT start another giveaway or send BON manually."
+                    "GIVEAWAY ERROR: The opening message could not be sent safely to DarkPeers Main Chat. " +
+                    "The giveaway was not started."
                 );
-                // Keep the snapshot. Never reset or re-send an ambiguous opening.
-                releaseTabLock();
+                resetGiveaway();
                 return;
             }
 
-            giveawayData.sponsorStartTs = verifiedOpening.sponsorStartTs;
-            giveawayData.openingCheckpoint.status = "confirmed";
-            giveawayData.openingCheckpoint.messageId = verifiedOpening.messageId;
-            tracker.giveawayStartTs = verifiedOpening.sponsorStartTs;
-            syncGiveawayTimeLeft(giveawayData);
-            if (!snapshotGiveaway({ force: true, verifyWrite: true })) {
-                logEvent("Opening confirmation not durable", "Recovery checkpoint retained; settlement remains blocked.");
-                window.alert("GIVEAWAY OPENING PAUSED: Confirmed opening could not be saved. Reload to recover.");
-                releaseTabLock();
-                return;
-            }
+            // Public opening is the temporal boundary. The pre-opening Gift History
+            // snapshot means every subsequently appearing received gift is new.
+            giveawayStartTime = new Date();
+            tracker.giveawayStartTs = giveawayStartTime.getTime();
+            // The advertised duration begins at the same public-opening boundary,
+            // not while balance/history preflight or chat delivery is still running.
+            giveawayData.endTs = giveawayStartTime.getTime() + totalTimeMs;
+            giveawayData.timeLeft = totalTimeMs / 1000;
+            window.__activeTracker = tracker;
 
-            // The pre-send checkpoint deliberately starts with accounting
-            // disabled. Once publication has been verified, reconcile the
-            // canonical Gift History BEFORE re-enabling pot mutations. Otherwise
-            // !addbon stays blocked forever on a fresh, otherwise healthy start.
-            try {
-                await tracker.reconcileCanonicalSponsorAccounting({ repairStats: false });
-                if (!snapshotGiveaway({ force: true, verifyWrite: true })) {
-                    throw new Error("Opening sponsor reconciliation snapshot did not persist");
-                }
-                setSponsorAccountingVerificationState(
-                    true, "Opening and canonical Gift History sponsor boundary verified."
-                );
-            } catch (error) {
-                setSponsorAccountingVerificationState(
-                    false, "Sponsor reconciliation deferred after public opening: " +
-                    String(error?.message || error)
-                );
-                scheduleSponsorAccountingRecovery(tracker);
-            }
-
-            if (giveawayData.__sponsorAccountingVerified === true) {
-                try { await tracker.poll(); } catch (error) { console.error(error); }
-                sponsorsInterval = setInterval(
-                    () => tracker.poll(), SPONSOR_GIFT_HISTORY_POLL_MS
-                );
-            }
+            try { await tracker.poll(); } catch (e) { console.error(e); }
+            sponsorsInterval = setInterval(
+                () => tracker.poll(),
+                SPONSOR_GIFT_HISTORY_POLL_MS
+            );
 
             chatReplayIgnoreBeforeTs = null;
             if (observer) {
@@ -5882,7 +5293,6 @@ body.host-panel-dragging * {
             lastMsgId = 0,
             cursorInitialized = false,
             giftHistoryClockOffsetMs = null,
-            giftHistoryClockOffsetUncertaintyMs = null,
             giftHistoryInitialized = false,
             giftHistorySeenKeys = [],
             historyFallbackActive = false,
@@ -5895,12 +5305,6 @@ body.host-panel-dragging * {
             this.lastMsgId = Math.max(0, Math.floor(Number(lastMsgId) || 0)); // persisted API cursor
             this.cursorInitialized = !!cursorInitialized;
             this.giftHistoryClockOffsetMs = optionalFiniteNumber(giftHistoryClockOffsetMs);
-            // Earlier versions stored a point-estimate without its fractional
-            // calibration error. DarkPeers Gift History has second precision,
-            // so reserve at least one complete second of unknown offset.
-            this.giftHistoryClockOffsetUncertaintyMs = Math.max(
-                1000, optionalFiniteNumber(giftHistoryClockOffsetUncertaintyMs) ?? 1000
-            );
             this.giftHistoryInitialized = !!giftHistoryInitialized;
             this.giftHistorySeenKeys = new Set(
                 (Array.isArray(giftHistorySeenKeys) ? giftHistorySeenKeys : [])
@@ -6303,26 +5707,6 @@ body.host-panel-dragging * {
                 offset = await this.ensureGiftHistoryClockOffset(rows);
             }
 
-            // Gift History exposes site-local and browser/UTC interpretations.
-            // Without an authoritative calibration we CANNOT pick whichever
-            // interpretation falls after the public opening: the other one may
-            // place the same gift before it. Keep every row retryable, without
-            // modifying sponsor totals or marking gift-history keys as seen.
-            // The canonical settlement reconciliation treats retryable rows as
-            // a hard failure, so no BON payouts can proceed from this state.
-            if (min !== null && offset === null) {
-                logEvent(
-                    "Sponsor accounting paused (clock uncalibrated)",
-                    "Gift History time offset is unknown; deferred all gift rows instead of choosing an ambiguous timestamp interpretation."
-                );
-                return {
-                    accepted: [],
-                    retryableKeys: new Set(
-                        rows.map(item => item?.historyKey).filter(Boolean)
-                    )
-                };
-            }
-
             // Re-read the closing latch after the await above. If endGiveaway()
             // closed the window while this ordinary poll was already in flight,
             // this pass must immediately inherit that cutoff.
@@ -6360,12 +5744,8 @@ body.host-panel-dragging * {
                     : Number(item?.createdAtTs);
 
                 if (offset !== null && Number.isFinite(wallTs)) {
-                    const start = wallTs - offset -
-                        Math.max(1000, this.giftHistoryClockOffsetUncertaintyMs ?? 1000);
-                    // A gift bucket overlapping public opening is ambiguous:
-                    // only an interval STARTING at/after the confirmed sponsor
-                    // boundary can be safely attributed to this giveaway.
-                    return (min === null || start >= min) ? [start] : [];
+                    const start = wallTs - offset;
+                    return (min === null || (start + resolutionMs) > min) ? [start] : [];
                 }
 
                 return [
@@ -6373,7 +5753,7 @@ body.host-panel-dragging * {
                     Number(item?.createdAtAltTs)
                 ].filter(ts =>
                     Number.isFinite(ts) &&
-                    (min === null || ts >= min)
+                    (min === null || (ts + resolutionMs) > min)
                 );
             };
 
@@ -6452,17 +5832,8 @@ body.host-panel-dragging * {
                     : Number(item?.createdAtTs);
 
                 if (offset !== null && Number.isFinite(wallTs)) {
-                    // The learned offset subtracts an exact event time from
-                    // coarse Gift History time. This shifts all bucket starts
-                    // forward by the anchor event's fractional second (and,
-                    // for clustered anchors, possibly more). Use the EARLIEST
-                    // possible start, including stored calibration uncertainty.
                     const eventTs = wallTs - offset;
-                    const earliestEventTs = eventTs -
-                        Math.max(1000, this.giftHistoryClockOffsetUncertaintyMs ?? 1000);
-                    // Entire Gift History timestamp bucket must be after
-                    // confirmed publication, not merely overlap its boundary.
-                    const afterOpen = min === null || earliestEventTs >= min;
+                    const afterOpen = min === null || (eventTs + resolutionMs) > min;
                     if (!afterOpen) continue;
 
                     if (max === null) {
@@ -6495,7 +5866,7 @@ body.host-panel-dragging * {
                 ].filter(Number.isFinite);
 
                 const openingCandidates = candidates.filter(ts =>
-                    min === null || ts >= min
+                    min === null || (ts + resolutionMs) > min
                 );
                 if (!openingCandidates.length) continue;
 
@@ -6846,27 +6217,21 @@ body.host-panel-dragging * {
                 if (!Number.isFinite(historyWallTs)) continue;
 
                 const offset = historyWallTs - Number(event.createdAtTs);
-                const resolutionMs = Math.max(
-                    1, Number(item?.timestampResolutionMs) ||
-                    unit3dTimestampResolutionMs(item?.rawTimestamp)
-                );
-                if (Math.abs(offset) <= MAX_PLAUSIBLE_OFFSET_MS) {
-                    samples.push({ offset, resolutionMs });
-                }
+                if (Math.abs(offset) <= MAX_PLAUSIBLE_OFFSET_MS) samples.push(offset);
             }
 
             if (!samples.length) return persisted;
 
             // Choose the densest 2-minute cluster, then its median. This rejects an
             // unrelated historical exact-value row without hardcoding any timezone.
-            samples.sort((a, b) => a.offset - b.offset);
+            samples.sort((a, b) => a - b);
             const CLUSTER_MS = 120_000;
             let best = [];
 
             for (let i = 0; i < samples.length; i++) {
                 const cluster = [];
                 for (let j = i; j < samples.length; j++) {
-                    if (samples[j].offset - samples[i].offset > CLUSTER_MS) break;
+                    if (samples[j] - samples[i] > CLUSTER_MS) break;
                     cluster.push(samples[j]);
                 }
                 if (cluster.length > best.length) best = cluster;
@@ -6875,20 +6240,8 @@ body.host-panel-dragging * {
             if (!best.length) return persisted;
             const mid = Math.floor(best.length / 2);
             const inferred = best.length % 2
-                ? best[mid].offset
-                : Math.round((best[mid - 1].offset + best[mid].offset) / 2);
-
-            // If the chosen offset is calibrated from a coarse timestamp,
-            // the true timezone offset can be up to one entire source bucket
-            // GREATER than the inferred point estimate. Include differences
-            // within the accepted anchor cluster, too. This upper error
-            // bound is persisted with the point estimate across page reloads.
-            const offsetUncertaintyMs = Math.max(
-                1000,
-                ...best.map(sample =>
-                    Math.max(0, sample.offset + sample.resolutionMs - inferred)
-                )
-            );
+                ? best[mid]
+                : Math.round((best[mid - 1] + best[mid]) / 2);
 
             // If we already learned a clock offset, don't replace it with a lone,
             // materially different sample. Multiple agreeing anchors may update it
@@ -6902,7 +6255,6 @@ body.host-panel-dragging * {
             }
 
             this.giftHistoryClockOffsetMs = inferred;
-            this.giftHistoryClockOffsetUncertaintyMs = offsetUncertaintyMs;
             return inferred;
         }
 
@@ -7579,19 +6931,16 @@ body.host-panel-dragging * {
 
     function makeStaffAttributedReply(ctx) {
         const reply = ctx && typeof ctx.reply === "function" ? ctx.reply : sendMessage;
-        // Silent Mode sends ALL command responses privately to the invoker,
-        // including staff errors/denials. Staff actions are attributed in the
-        // public chat only when the host has not enabled Silent Mode.
-        if (GENERAL_SETTINGS.silent_mode ||
-            !ctx || !isNonHostStaffAction(ctx.author, ctx.fancyName, ctx.giveawayData?.host)) {
+        if (!ctx || !isNonHostStaffAction(ctx.author, ctx.fancyName, ctx.giveawayData?.host)) {
             return reply;
         }
 
         const prefix =
             `👮 [b][color=#5DE2E7]Staff action by ${sanitizeNick(ctx.author)}:[/color][/b] `;
 
-        // Public staff attribution remains on when Silent Mode is disabled.
-        // Rehearsal Mode still redirects script output privately to the host.
+        // Staff intervention is operationally significant and must stay public
+        // even when the host enabled Silent Mode. Rehearsal Mode still suppresses
+        // sendMessage itself, so testing cannot leak messages into live chat.
         return (message) => sendMessage(prefix + message);
     }
 
@@ -7651,7 +7000,7 @@ body.host-panel-dragging * {
             }
 
             const action = (args[0] || "").toLowerCase(); // "add" / "remove"
-            const minutes = Number(args[1]);
+            const minutes = parseFloat(args[1]);
             const isPriv = normalizeUserKey(author) === normalizeUserKey(giveawayData.host) || isAdmin(fancyName);
 
             if (!isPriv) return; // silently ignore non-host/non-admin
@@ -8161,7 +7510,7 @@ body.host-panel-dragging * {
                 const announcement =
                     `[b][color=${SCALING_ACCENT_COLOR}]Host adjustment:[/color][/b] ` +
                     `[b]Winners ${direction}[/b]: [b][color=#5DE2E7]${prevEffective} → ${newCount} (${sign}${delta})[/color][/b].`;
-                reply(announcement);
+                sendMessage(announcement);
                 flashWinnersUI();
                 logEvent("Host adjusted winners", `${prevEffective} -> ${newCount} (${sign}${delta})`);
             }
@@ -8484,14 +7833,11 @@ body.host-panel-dragging * {
     
             snapshotGiveaway({ force: true });
 
-            // Command-generated pot announcements must honor Silent Mode.
-            // Route privately to the invoking host there; preserve ownership
-            // checking in both public and private delivery paths.
-            const potAnnouncement = `${bridgeMarker(BRIDGE_MARKERS.POT, "💰")} ` +
-                [addedPart, totalPart, donationPart, scalingPart].filter(Boolean).join(" ");
-            const announced = await sendCommandResponse(author, potAnnouncement, {
-                requireExclusiveGiveawayOwnership: true
-            });
+            const announced = await sendMessage(
+                `${bridgeMarker(BRIDGE_MARKERS.POT, "💰")} ` +
+                [addedPart, totalPart, donationPart, scalingPart].filter(Boolean).join(" "),
+                { requireExclusiveGiveawayOwnership: true }
+            );
 
             if (announced === false) {
                 logEvent(
@@ -8529,39 +7875,16 @@ body.host-panel-dragging * {
             if (!isHostOrAdmin(author, fancyName, giveawayData.host)) return;
             const actionReply = makeStaffAttributedReply(ctx);
 
-            const mins = Number(args[0]);
-            if (!Number.isFinite(mins) || mins <= 0) {
+            const mins = parseFloat(args[0]);
+            if (isNaN(mins) || mins <= 0) {
                 actionReply(
                     "[color=red]Usage:[/color] !time add|remove <minutes> or !addtime|!removetime <minutes>"
                 );
                 return;
             }
 
-            // Limit the TOTAL duration since the public opening, not merely the
-            // remaining countdown. Host and staff use this same enforcement path.
-            const maxEndTs = getGiveawayMaxEndTs(giveawayData.openedAt);
-            const oldEndTs = Number(giveawayData.endTs);
-            const nextEndTs = oldEndTs + sign * mins * 60_000;
-            if (maxEndTs === null || !Number.isFinite(oldEndTs) || !Number.isFinite(nextEndTs)) {
-                actionReply("[color=red]Time change refused:[/color] a trustworthy giveaway opening time is unavailable.");
-                return;
-            }
-            if (nextEndTs > maxEndTs) {
-                if (ctx.source === "chat") {
-                    // Use the ordinary command-response route. Silent Mode
-                    // sends this privately to the command author; Rehearsal
-                    // Mode redirects outgoing messages privately to the host.
-                    actionReply(
-                        `🚫 [color=red][b]Time limit exceeded![/b][/color] ` +
-                        `DarkPeers giveaways can last at most [b]${MAX_GIVEAWAY_MINUTES} minutes total[/b] ` +
-                        `from opening. [b]No time was added.[/b]`
-                    );
-                } else {
-                    actionReply(`[color=red]Time change refused:[/color] DarkPeers allows a maximum of ${MAX_GIVEAWAY_MINUTES} minutes from the original opening.`);
-                }
-                return;
-            }
-            giveawayData.endTs = nextEndTs;
+            const deltaMs = sign * mins * 60_000;
+            giveawayData.endTs += deltaMs; // move the deadline
 
             rebuildSchedule(); // rebuild reminder schedule
 
@@ -11794,11 +11117,7 @@ body.host-panel-dragging * {
               `✨[b][color=#FB4F4F]Gift the host to add to the pot! [color=${GIFT_HINT_COLOR}]/gift ${getGiftSyntaxHostName()} AMOUNT MESSAGE[/color][/color][/b]✨` +
               silentLine +
               rigLine;
-        // Both scheduled reminders and explicit !reminder requests are
-        // announcements to ALL entrants, not replies to the host command.
-        // Silent Mode must not make the requested reminder invisible.
-        // Rehearsal Mode still redirects sendMessage() to the host's PM.
-        return sendMessage(msg);
+        sendMessage(msg);
     }
 
     // ───────────── HTTP-based BON gifting helper ─────────────
@@ -12730,11 +12049,11 @@ body.host-panel-dragging * {
         return sendMessage(`/msg ${to} ${body}`, options);
     }
 
-    async function sendCommandResponse(username, messageStr, options = {}) {
+    async function sendCommandResponse(username, messageStr) {
         if (GENERAL_SETTINGS.silent_mode) {
-            return sendPrivateMessage(username, messageStr, options);
+            return sendPrivateMessage(username, messageStr);
         }
-        return sendMessage(messageStr, options);
+        return sendMessage(messageStr);
     }
 
     /** Prepare a message for sending: obfuscate "giveaway" and apply number formatting. */
@@ -12861,30 +12180,11 @@ body.host-panel-dragging * {
         if (!forceChatboxOnly && !DEBUG_SETTINGS.suppressApiMessages) {
             try {
                 if (await trySendViaApi(messageStr)) return true;
-                // A 5xx/non-OK API response might still follow a committed
-                // public POST. An opening must NEVER post again via chatbox:
-                // the durable checkpoint is the only safe recovery path.
-                if (options?.noFallbackOnApiException === true) return false;
             } catch (e) {
-                // An opening POST may already have committed before its reply
-                // timed out. Never issue a second, chatbox-based announcement
-                // during that uncertainty; the persisted opening checkpoint
-                // must be reconciled from authoritative Main Chat first.
-                if (options?.noFallbackOnApiException === true) {
-                    if (DEBUG_SETTINGS.log_chat_messages) {
-                        console.warn("Opening API result ambiguous; leaving checkpoint for verification:", e);
-                    }
-                    return false;
-                }
                 if (DEBUG_SETTINGS.log_chat_messages) console.warn("API send failed, falling back to chatbox method:", e);
                 if (DEBUG_SETTINGS.verify_sendmessage) console.debug("sendMessage: API send failed, falling back to chatbox method");
             }
         }
-
-        // Opening output is single-shot. Even when the API was deliberately
-        // disabled, missing credentials, or returned non-OK, never silently
-        // publish a second opening through chatbox.
-        if (options?.noFallbackOnApiException === true) return false;
 
         // Settlement output is authoritative. If the API attempt yielded while a
         // BFCache/pagehide handoff quarantined this document, never let the stale
@@ -13754,22 +13054,9 @@ body.host-panel-dragging * {
     }
 
 
-    function parseGiveawayMinutes(value) {
-        const raw = String(value ?? "").trim();
-        if (!/^\d+$/.test(raw)) return null;
-        const minutes = Number(raw);
-        return Number.isSafeInteger(minutes) && minutes >= 1 && minutes <= MAX_GIVEAWAY_MINUTES
-            ? minutes : null;
-    }
-
-    function getGiveawayMaxEndTs(startTime) {
-        const startedAt = Number(startTime);
-        return Number.isFinite(startedAt) && startedAt > 0
-            ? startedAt + MAX_GIVEAWAY_MINUTES * 60_000 : null;
-    }
-
     function totalMinutes () {
-        return parseGiveawayMinutes(timerInput?.value) ?? 0;
+        const t = parseInt(String(timerInput?.value ?? ""), 10);
+        return (Number.isFinite(t) && t > 0) ? t : 0;
     }
 
     function nextReminderMs(schedule, msLeft) {

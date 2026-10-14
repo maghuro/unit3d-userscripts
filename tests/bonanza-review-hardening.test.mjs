@@ -9,7 +9,7 @@ const sourcePath = new URL(
 const source = readFileSync(sourcePath, "utf8");
 
 test("review hardening invariants stay present", () => {
-  assert.match(source, /^\/\/ @version\s+1\.5\.15$/m);
+  assert.match(source, /^\/\/ @version\s+1\.5\.16$/m);
   assert.doesNotMatch(source, /pollChatFallback/);
   assert.doesNotMatch(source, /onlyguardians/i);
   assert.match(source, /async function getLatestMainChatReplayBoundary\(\)/);
@@ -20,7 +20,7 @@ test("review hardening invariants stay present", () => {
   assert.match(source, /Rehearsal BON Pool contribution suppressed/);
   assert.equal(
     (source.match(/getLatestChatMessageId\(DARKPEERS_MAIN_CHATROOM_ID\)/g) || []).length,
-    5 // Including the pre-send opening cursor for ambiguous POST recovery
+    4
   );
   assert.equal(
     (source.match(/getLatestChatMessageId\(DARKPEERS_CHATROOM_ID\)/g) || []).length,

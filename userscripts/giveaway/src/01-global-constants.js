@@ -8,7 +8,6 @@
     // - MIN_ACTION_GAP_MS blocks ultra-fast repeat triggers (usually bots/double-sends)
     // - REPEAT_COMMAND_COOLDOWNS_MS prevents the same command from being spammed for identical output
     // - strikes increase lockout length for repeat offenders (decays over time)
-    const MAX_GIVEAWAY_MINUTES = 45; // DarkPeers rule: hard total cap from public opening
     const MIN_ACTION_GAP_MS = 900; // ignore triggers faster than this per user
     const ENTRY_FEEDBACK_COOLDOWN_MS = 8000; // throttle duplicate/out-of-range feedback per user
     const STRIKE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
@@ -587,7 +586,7 @@
         maxwinners: { label: "Max Winners", section: "giveaway", description: "Set max scaled winners.", usage: `!maxwinners 1-${MAX_WINNERS}`, requiresGiveaway: true, hostOnly: true,
                      args: [{ name: "count", label: "Max", type: "int", required: true, min: 1, max: MAX_WINNERS, placeholder: "max" }] },
         scale: { label: "Scale", section: "info", description: "Show scaling progress.", usage: "!scale", requiresGiveaway: true },
-        addtime: { label: "Add Time", section: "giveaway", description: "Add minutes (45-minute total cap).", usage: "!addtime <minutes>", requiresGiveaway: true, hostOnly: true,
+        addtime: { label: "Add Time", section: "giveaway", description: "Add giveaway minutes.", usage: "!addtime <minutes>", requiresGiveaway: true, hostOnly: true,
                   args: [{ name: "minutes", label: "Min", type: "int", required: true, min: 1, placeholder: "minutes" }] },
         removetime: { label: "Remove Time", section: "giveaway", description: "Remove giveaway minutes.", usage: "!removetime <minutes>", requiresGiveaway: true, hostOnly: true,
                      args: [{ name: "minutes", label: "Min", type: "int", required: true, min: 1, placeholder: "minutes" }] },
