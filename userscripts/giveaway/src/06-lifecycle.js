@@ -144,10 +144,15 @@
                     if (!whollyInside &&
                         !(hasUniqueProof && overlapsAttempt &&
                             canonical(message?.message, true).endsWith(proof))) continue;
-                    matches.push({
-                        messageId: id,
-                        sponsorStartTs: Math.max(startedAt, timestamp + resolutionMs)
-                    });
+                    // An API replay can contain the very same record twice.
+                    // One message ID is one announcement; two distinct IDs
+                    // with this proof are always ambiguous.
+                    if (!matches.some(match => match.messageId === id)) {
+                        matches.push({
+                            messageId: id,
+                            sponsorStartTs: Math.max(startedAt, timestamp + resolutionMs)
+                        });
+                    }
                 }
                 // Reconcile only when there is ONE candidate across the
                 // entire returned Main Chat history, not just one within the
