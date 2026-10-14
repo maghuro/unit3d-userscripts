@@ -4202,6 +4202,20 @@ body.host-panel-dragging * {
     // sent minutes/hours later as this giveaway's opening.
     const OPENING_POST_MAX_PUBLICATION_WINDOW_MS = 10000;
 
+    // Unique live-opening proof encoded as non-rendering Unicode code points
+    // already observed surviving DarkPeers chat HTML and bridge markers.
+    function createOpeningProofMarker() {
+        if (!window.crypto || typeof window.crypto.getRandomValues !== "function") return null;
+        const bytes = new Uint8Array(16);
+        window.crypto.getRandomValues(bytes);
+        const bits = Array.from(bytes, b =>
+            Array.from({ length: 8 }, (_, i) =>
+                (b & (1 << (7 - i))) ? "\u200B" : "\u2063"
+            ).join("")
+        ).join("");
+        return "\u2063\u200B\u2063\u200B" + bits + "\u200B\u2063\u200B\u2063";
+    }
+
     // Reconcile an opening announcement against authoritative Main Chat history.
     // An HTTP timeout is NOT evidence the server rejected the POST. Never
     // release a pending opening snapshot merely because sendMessage returned
@@ -4261,6 +4275,10 @@ body.host-panel-dragging * {
             }
             return decodeEntities(content).replace(/[\s\u00a0]+/g, "");
         };
+        const proof = checkpoint.openingProof;
+        const hasUniqueProof = typeof proof === "string" &&
+            /^\u2063\u200B\u2063\u200B[\u2063\u200B]{128}\u200B\u2063\u200B\u2063$/.test(proof) &&
+            checkpoint.preparedMessage.endsWith(proof);
         const expected = canonical(checkpoint.preparedMessage, false);
         if (!expected) return null;
         const expectedHost = String(checkpoint.host ||
@@ -4310,11 +4328,12 @@ body.host-panel-dragging * {
                         !(timestamp < startedAt || (timestamp + resolutionMs) > windowEnd);
                     const overlapsAttempt =
                         timestamp < windowEnd && timestamp + resolutionMs > startedAt;
-                    // Only positive HTTP POST acknowledgement permits accepting
-                    // a unique overlapping server-second bucket. On ambiguous
-                    // delivery the stricter wholly-contained rule still applies.
+                    // A positive HTTP status alone does not identify a returned
+                    // same-second announcement. Require a unique random marker
+                    // persisted before POST. Legacy openings remain fail-closed.
                     if (!whollyInside &&
-                        !(checkpoint.sendAcknowledged === true && overlapsAttempt)) continue;
+                        !(hasUniqueProof && overlapsAttempt &&
+                            canonical(message?.message, true).endsWith(proof))) continue;
                     matches.push({
                         messageId: id,
                         sponsorStartTs: Math.max(startedAt, timestamp + resolutionMs)
@@ -4682,7 +4701,13 @@ body.host-panel-dragging * {
             // Deadline: conservative PRE-SEND time. Sponsorship: independently
             // verified PUBLICATION time (never the earlier request timestamp).
             const openingSendStartedAt = Date.now();
-            const preparedOpening = prepareOutgoingMessage(introMessage);
+            const openingProof = REHEARSAL_MODE ? null : createOpeningProofMarker();
+            if (!REHEARSAL_MODE && !openingProof) {
+                window.alert("GIVEAWAY ERROR: Secure opening proof unavailable. No message was posted.");
+                resetGiveaway();
+                return;
+            }
+            const preparedOpening = prepareOutgoingMessage(introMessage) + (openingProof || "");
             giveawayStartTime = new Date(openingSendStartedAt);
             giveawayData.openedAt = openingSendStartedAt;
             giveawayData.endTs = openingSendStartedAt + totalTimeMs;
@@ -4690,6 +4715,7 @@ body.host-panel-dragging * {
             giveawayData.openingCheckpoint = {
                 status: "pending",
                 host: giveawayData.host,
+                openingProof,
                 sendAcknowledged: false,
                 startedAt: openingSendStartedAt,
                 afterMessageId,
