@@ -1955,10 +1955,32 @@
                 const savedSponsorStart = optionalFiniteNumber(
                     snap.giveawayData.sponsorStartTs
                 );
+                // The latest-100 chat page may no longer include a previously
+                // confirmed announcement. Its persisted random proof and exact
+                // message ID can remain authoritative ONLY when the healthy
+                // bounded history has clearly advanced beyond that ID. There
+                // is no UNIT3D pagination endpoint to query older messages.
+                // Revalidate the persisted sponsor boundary conservatively;
+                // do not derive a new one from a later, unrelated chat message.
+                const historicalConfirmation = verified?.historyEvicted === true;
+                const historicalSponsorBoundaryOk = historicalConfirmation &&
+                    savedSponsorStart !== null &&
+                    Number(restoredCheckpoint.startedAt) ===
+                        Number(snap.giveawayData.openedAt) &&
+                    Number.isFinite(Number(restoredCheckpoint.sendCompletedAt)) &&
+                    Number(restoredCheckpoint.sendCompletedAt) >=
+                        Number(restoredCheckpoint.startedAt) &&
+                    savedSponsorStart > Number(restoredCheckpoint.startedAt) &&
+                    savedSponsorStart <= Math.min(
+                        Number(restoredCheckpoint.windowEndAt),
+                        Number(restoredCheckpoint.sendCompletedAt) + 1000
+                    );
                 if (!verified ||
                     verified.messageId !== optionalFiniteNumber(restoredCheckpoint.messageId) ||
                     savedSponsorStart === null ||
-                    verified.sponsorStartTs !== savedSponsorStart) {
+                    (historicalConfirmation
+                        ? !historicalSponsorBoundaryOk
+                        : verified.sponsorStartTs !== savedSponsorStart)) {
                     logEvent("Confirmed opening recovery deferred",
                         "Authoritative Main Chat could not reprove the exact saved opening and sponsor boundary.");
                     window.alert(
