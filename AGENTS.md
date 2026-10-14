@@ -72,6 +72,14 @@ multiple userscripts, not just BONanza.
   re-post blindly, or settle BON.
   Restore must verify the exact own-user announcement in authoritative
   Main Chat history before enabling entries or any sponsor/payout action.
+  Exception for a **previously confirmed** opening: UNIT3D's chat GET
+  returns only the latest configured messages (observed: 100), ignores
+  `after_id`, and offers no pagination for this endpoint. When a healthy,
+  full latest page begins strictly after the durable confirmed message ID,
+  recovery may rely on the ORIGINAL recorded message ID and random proof,
+  with the unchanged, bounded sponsor-start timestamp revalidated. This
+  exception NEVER applies to a pending opening, a message still within the
+  returned ID range, a short/failed response, or a legacy proofless snapshot.
 - The 45-minute absolute deadline is anchored to the conservative
   **pre-send** time, so server response latency cannot extend the event.
   **Sponsor eligibility must NOT use that time.** It begins strictly after
