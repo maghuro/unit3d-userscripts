@@ -92,3 +92,23 @@ location.reload();
 ```
 
 Never run a real giveaway while the REHEARSAL MODE banner is visible.
+
+## Unverified opening in LIVE mode
+
+If Main Chat shows an announcement but it cannot be proved by the userscript, the
+checkpoint stays pending and **no giveaway settlement, sponsor processing, or
+BON transfer runs**. The recovery alert is now a non-modal notice.
+
+Use **Cancel & archive pending giveaway** only after checking the Main Chat and
+canonical Gift History. It requires a manual confirmation and an exclusive tab
+lock. The script re-reads the latest exact pending checkpoint, rejects any
+settlement evidence, writes a verified original-state archive, and only then
+removes the active key. It does **not** delete public chat messages or refund
+gifts received from sponsors. Those remain a manual follow-up with donors.
+If the archive cannot be persisted, the active snapshot remains untouched.
+
+New LIVE announcements carry a cryptographic invisible 128-bit per-opening
+proof to disambiguate whole-second API timestamps, and older snapshots cannot
+be silently upgraded to that proof. Rehearsal mode cannot establish that an
+invisible proof survives the real Main Chat rendering pipeline; validate this
+against the site before merging a new release.
