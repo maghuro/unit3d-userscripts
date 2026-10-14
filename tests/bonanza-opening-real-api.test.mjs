@@ -130,3 +130,20 @@ test("opening acknowledgement is durably saved before reconciliation", () => {
   const verified = lifecycle.indexOf("await verifyPendingGiveawayOpening(", ack);
   assert.ok(post > 0 && ack > post && persist > ack && verified > persist);
 });
+
+test("pending opening offers a user-controlled non-modal archive, never automatic clearing", () => {
+  const initialization = readFileSync(
+    new URL("../userscripts/giveaway/src/05-initialization.js", import.meta.url), "utf8"
+  );
+  assert.match(initialization, /function showUnverifiedOpeningControls\(/);
+  assert.match(initialization, /Cancel & archive pending giveaway/);
+  const start = initialization.indexOf("async function restoreGiveawayFromSnapshot(");
+  const end = initialization.indexOf("function showUnverifiedOpeningControls(snap)", start);
+  assert.ok(start >= 0);
+  const recovery = initialization.slice(start);
+  assert.match(recovery, /showUnverifiedOpeningControls\(snap\);/);
+  const createArchive = initialization.indexOf("localStorage.setItem(archiveKey, current.raw)");
+  const verifyArchive = initialization.indexOf("localStorage.getItem(archiveKey) !== current.raw", createArchive);
+  const remove = initialization.indexOf("localStorage.removeItem(current.storageKey)", verifyArchive);
+  assert.ok(createArchive > 0 && verifyArchive > createArchive && remove > verifyArchive);
+});
