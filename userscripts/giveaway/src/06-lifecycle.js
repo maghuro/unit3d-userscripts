@@ -103,6 +103,11 @@
                 if (!ownsTabLock()) return null;
                 if (!Array.isArray(payload?.data)) throw new Error("Malformed Main Chat messages");
                 const matches = [];
+                // Track every matching announcement after the pre-send cursor,
+                // including posts OUTSIDE the permitted timestamp interval.
+                // Otherwise an out-of-window duplicate could be silently
+                // discarded, leaving a misleading single valid candidate.
+                const matchingAnnouncementIds = new Set();
                 for (const message of payload.data) {
                     const id = optionalFiniteNumber(message?.id);
                     if (!Number.isSafeInteger(id) || id <= afterId) continue;
@@ -123,6 +128,7 @@
                         if (!expectedHost || serverName !== expectedHost) continue;
                     }
                     if (canonical(message?.message, true) !== expected) continue;
+                    matchingAnnouncementIds.add(id);
                     const rawTs = String(message?.created_at || "");
                     const timestamp = Date.parse(rawTs);
                     const resolutionMs = unit3dTimestampResolutionMs(rawTs);
@@ -143,7 +149,11 @@
                         sponsorStartTs: Math.max(startedAt, timestamp + resolutionMs)
                     });
                 }
-                // Never guess between duplicate equal announcements.
+                // Reconcile only when there is ONE candidate across the
+                // entire returned Main Chat history, not just one within the
+                // timestamp window. This cannot establish uniqueness for an
+                // announcement already evicted by the fixed 100-message limit.
+                if (matchingAnnouncementIds.size > 1) return null;
                 if (matches.length === 1) return matches[0];
                 if (matches.length > 1) return null;
 
